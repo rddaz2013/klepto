@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 #
 # Author: Mike McKerns (mmckerns @caltech and @uqfoundation)
-# Copyright (c) 2013-2015 California Institute of Technology.
+# Copyright (c) 2013-2016 California Institute of Technology.
+# Copyright (c) 2016-2017 The Uncertainty Quantification Foundation.
 # License: 3-clause BSD.  The full license text is available at:
 #  - http://trac.mystic.cacr.caltech.edu/project/pathos/browser/klepto/LICENSE
 """
@@ -13,6 +14,13 @@ Main functions exported are::
 """
 
 from __future__ import absolute_import
+
+try:
+    import ctypes
+    # if using `pypy`, pythonapi is not found
+    IS_PYPY = not hasattr(ctypes, 'pythonapi')
+except ImportError:
+    IS_PYPY = False
 
 try:
     from collections import namedtuple

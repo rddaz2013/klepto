@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 #
 # Author: Mike McKerns (mmckerns @caltech and @uqfoundation)
-# Copyright (c) 2013-2015 California Institute of Technology.
+# Copyright (c) 2013-2016 California Institute of Technology.
+# Copyright (c) 2016-2017 The Uncertainty Quantification Foundation.
 # License: 3-clause BSD.  The full license text is available at:
 #  - http://trac.mystic.cacr.caltech.edu/project/pathos/browser/klepto/LICENSE
 """
@@ -9,16 +10,14 @@ decorators that provide rounding
 """
 
 __all__ = ['deep_round', 'shallow_round', 'simple_round']
-
-from klepto.tools import isiterable
 #FIXME: these seem *slow*... and a bit convoluted.  Maybe rewrite as classes?
 import sys
-PYTHON3 = (hex(sys.hexversion) >= '0x30000f0')
-if PYTHON3:
-  unicode = str
+if (hex(sys.hexversion) >= '0x30000f0'):
+  unicode = str #PYTHON3
 
 def deep_round_factory(tol):
   """helper function for deep_round (a factory for deep_round functions)"""
+  from klepto.tools import isiterable
   def deep_round(*args, **kwds):
     argstype = type(args) 
     _args = list(args)
@@ -150,6 +149,7 @@ def shallow_round_factory(tol):
   try:
     from numpy import round as around
   except ImportError:
+    from klepto.tools import isiterable
     def around(iterable, tol):
       if not isiterable(iterable): return round(iterable, tol)
       itype = type(iterable)

@@ -5,7 +5,8 @@
 # and subsequent forks as well as the version available in python3.3
 #
 # Author: Mike McKerns (mmckerns @caltech and @uqfoundation)
-# Copyright (c) 2013-2015 California Institute of Technology.
+# Copyright (c) 2013-2016 California Institute of Technology.
+# Copyright (c) 2016-2017 The Uncertainty Quantification Foundation.
 # License: 3-clause BSD.  The full license text is available at:
 #  - http://trac.mystic.cacr.caltech.edu/project/pathos/browser/klepto/LICENSE
 """
@@ -46,9 +47,10 @@ class no_cache(object):
     maxsize = maximum cache size [fixed at maxsize=0]
     cache = storage hashmap (default is {})
     keymap = cache key encoder (default is keymaps.hashmap(flat=True))
+    ignore = function argument names and indicies to 'ignore' (default is None)
     tol = integer tolerance for rounding (default is None)
     deep = boolean for rounding depth (default is False, i.e. 'shallow')
-    ignore = function argument names and indicies to 'ignore' (default is None)
+    purge = boolean for purge cache to archive at maxsize (fixed at True)
 
     If *keymap* is given, it will replace the hashing algorithm for generating
     cache keys.  Several hashing algorithms are available in 'keymaps'. The
@@ -74,9 +76,10 @@ class no_cache(object):
     with f.archive(obj).  Load from the archive with f.load(), and dump from
     the cache to the archive with f.dump().
     """
-    def __init__(self, maxsize=0, cache=None, keymap=None, ignore=None, tol=None, deep=False):
+    def __init__(self, maxsize=0, cache=None, keymap=None, ignore=None, tol=None, deep=False, purge=True):
        #if maxsize is not 0: raise ValueError('maxsize cannot be set')
         maxsize = 0 #XXX: allow maxsize to be given but ignored ?
+        purge = True #XXX: allow purge to be given but ignored ?
         if cache is None: cache = archive_dict()
         elif type(cache) is dict: cache = archive_dict(cache)
 
@@ -100,6 +103,7 @@ class no_cache(object):
             'roundargs': rounded_args,
             'tol': tol,
             'deep': deep,
+            'purge': purge,
         }
         return
 
@@ -135,6 +139,7 @@ class no_cache(object):
 
             # purge cache
             if _len(cache) > maxsize:
+                #XXX: better: if cache is cache.archive ?
                 if cache.archived():
                     cache.dump()
                 cache.clear() 
@@ -204,7 +209,7 @@ class no_cache(object):
         ignore = self.__state__['ignore']
         tol = self.__state__['tol']
         deep = self.__state__['deep']
-        return (self.__class__, (0, cache, keymap, ignore, tol, deep))
+        return (self.__class__, (0, cache, keymap, ignore, tol, deep, True))
 
 
 class inf_cache(object):
@@ -225,9 +230,10 @@ class inf_cache(object):
     maxsize = maximum cache size [fixed at maxsize=None]
     cache = storage hashmap (default is {})
     keymap = cache key encoder (default is keymaps.hashmap(flat=True))
+    ignore = function argument names and indicies to 'ignore' (default is None)
     tol = integer tolerance for rounding (default is None)
     deep = boolean for rounding depth (default is False, i.e. 'shallow')
-    ignore = function argument names and indicies to 'ignore' (default is None)
+    purge = boolean for purge cache to archive at maxsize (fixed at False)
 
     If *keymap* is given, it will replace the hashing algorithm for generating
     cache keys.  Several hashing algorithms are available in 'keymaps'. The
@@ -252,9 +258,10 @@ class inf_cache(object):
     with f.archive(obj).  Load from the archive with f.load(), and dump from
     the cache to the archive with f.dump().
     """
-    def __init__(self, maxsize=None, cache=None, keymap=None, ignore=None, tol=None, deep=False):
+    def __init__(self, maxsize=None, cache=None, keymap=None, ignore=None, tol=None, deep=False, purge=False):
        #if maxsize is not None: raise ValueError('maxsize cannot be set')
         maxsize = None #XXX: allow maxsize to be given but ignored ?
+        purge = False #XXX: allow purge to be given but ignored ?
         if cache is None: cache = archive_dict()
         elif type(cache) is dict: cache = archive_dict(cache)
 
@@ -278,6 +285,7 @@ class inf_cache(object):
             'roundargs': rounded_args,
             'tol': tol,
             'deep': deep,
+            'purge': purge,
         }
         return
 
@@ -381,7 +389,7 @@ class inf_cache(object):
         ignore = self.__state__['ignore']
         tol = self.__state__['tol']
         deep = self.__state__['deep']
-        return (self.__class__, (None, cache, keymap, ignore, tol, deep))
+        return (self.__class__, (None, cache, keymap, ignore, tol, deep, False))
 
 
 class lfu_cache(object):
@@ -392,6 +400,7 @@ class lfu_cache(object):
     not re-evaluated.  To avoid memory issues, a maximum cache size is imposed.
     For caches with an archive, the full cache dumps to archive upon reaching
     maxsize. For caches without an archive, the LFU algorithm manages the cache.
+    Caches with an archive will use the latter behavior when 'purge' is False.
     This decorator takes an integer tolerance 'tol', equal to the number of
     decimal places to which it will round off floats, and a bool 'deep' for
     whether the rounding on inputs will be 'shallow' or 'deep'.  Note that
@@ -404,9 +413,10 @@ class lfu_cache(object):
     maxsize = maximum cache size
     cache = storage hashmap (default is {})
     keymap = cache key encoder (default is keymaps.hashmap(flat=True))
+    ignore = function argument names and indicies to 'ignore' (default is None)
     tol = integer tolerance for rounding (default is None)
     deep = boolean for rounding depth (default is False, i.e. 'shallow')
-    ignore = function argument names and indicies to 'ignore' (default is None)
+    purge = boolean for purge cache to archive at maxsize (default is True)
 
     If *maxsize* is None, this cache will grow without bound.
 
@@ -435,7 +445,7 @@ class lfu_cache(object):
 
     See: http://en.wikipedia.org/wiki/Cache_algorithms#Least_Frequently_Used
     """
-    def __init__(self, maxsize=100, cache=None, keymap=None, ignore=None, tol=None, deep=False):
+    def __init__(self, maxsize=100, cache=None, keymap=None, ignore=None, tol=None, deep=False, purge=True):
         if maxsize == 0:
             return no_cache(cache=cache, keymap=keymep, ignore=ignore, tol=tol, deep=deep)
         if maxsize is None:
@@ -463,6 +473,7 @@ class lfu_cache(object):
             'roundargs': rounded_args,
             'tol': tol,
             'deep': deep,
+            'purge': purge,
         }
         return
 
@@ -480,6 +491,7 @@ class lfu_cache(object):
         keymap = self.__state__['keymap']
         ignore = self.__state__['ignore']
         rounded_args = self.__state__['roundargs']
+        purge = self.__state__['purge']
 
         def wrapper(*args, **kwds):
             _args, _kwds = rounded_args(*args, **kwds)
@@ -508,7 +520,8 @@ class lfu_cache(object):
 
                 # purge cache
                 if _len(cache) > maxsize:
-                    if cache.archived():
+                    #XXX: better: if cache is cache.archive ?
+                    if cache.archived() and purge:
                         cache.dump()
                         cache.clear() 
                         use_count.clear()
@@ -516,7 +529,10 @@ class lfu_cache(object):
                         for k, _ in nsmallest(max(2, maxsize // 10),
                                               iter(use_count.items()),
                                               key=itemgetter(1)):
-                            del cache[k], use_count[k]
+                            if cache.archived(): cache.dump(k)
+                            try: del cache[k]
+                            except KeyError: pass #FIXME: possible less purged
+                            use_count.pop(k, None)
             return result
 
         def archive(obj):
@@ -586,7 +602,8 @@ class lfu_cache(object):
         ignore = self.__state__['ignore']
         tol = self.__state__['tol']
         deep = self.__state__['deep']
-        return (self.__class__, (maxsize, cache, keymap, ignore, tol, deep))
+        purge = self.__state__['purge']
+        return (self.__class__, (maxsize, cache, keymap, ignore, tol, deep, purge))
 
 
 class lru_cache(object):
@@ -597,6 +614,7 @@ class lru_cache(object):
     not re-evaluated.  To avoid memory issues, a maximum cache size is imposed.
     For caches with an archive, the full cache dumps to archive upon reaching
     maxsize. For caches without an archive, the LRU algorithm manages the cache.
+    Caches with an archive will use the latter behavior when 'purge' is False.
     This decorator takes an integer tolerance 'tol', equal to the number of
     decimal places to which it will round off floats, and a bool 'deep' for
     whether the rounding on inputs will be 'shallow' or 'deep'.  Note that
@@ -609,9 +627,10 @@ class lru_cache(object):
     maxsize = maximum cache size
     cache = storage hashmap (default is {})
     keymap = cache key encoder (default is keymaps.hashmap(flat=True))
+    ignore = function argument names and indicies to 'ignore' (default is None)
     tol = integer tolerance for rounding (default is None)
     deep = boolean for rounding depth (default is False, i.e. 'shallow')
-    ignore = function argument names and indicies to 'ignore' (default is None)
+    purge = boolean for purge cache to archive at maxsize (default is True)
 
     If *maxsize* is None, this cache will grow without bound.
 
@@ -640,7 +659,7 @@ class lru_cache(object):
 
     See: http://en.wikipedia.org/wiki/Cache_algorithms#Least_Recently_Used
     """
-    def __init__(self, maxsize=100, cache=None, keymap=None, ignore=None, tol=None, deep=False):
+    def __init__(self, maxsize=100, cache=None, keymap=None, ignore=None, tol=None, deep=False, purge=True):
         if maxsize == 0:
             return no_cache(cache=cache, keymap=keymep, ignore=ignore, tol=tol, deep=deep)
         if maxsize is None:
@@ -668,6 +687,7 @@ class lru_cache(object):
             'roundargs': rounded_args,
             'tol': tol,
             'deep': deep,
+            'purge': purge,
         }
         return
 
@@ -690,6 +710,7 @@ class lru_cache(object):
         keymap = self.__state__['keymap']
         ignore = self.__state__['ignore']
         rounded_args = self.__state__['roundargs']
+        purge = self.__state__['purge']
         maxqueue = maxsize * 10 #XXX: settable? confirm this works as expected
 
         # lookup optimizations (ugly but fast)
@@ -729,7 +750,8 @@ class lru_cache(object):
 
                 # purge cache
                 if _len(cache) > maxsize:
-                    if cache.archived():
+                    #XXX: better: if cache is cache.archive ?
+                    if cache.archived() and purge:
                         cache.dump()
                         cache.clear() 
                         queue.clear()
@@ -740,7 +762,10 @@ class lru_cache(object):
                         while refcount[key]:
                             key = queue_popleft()
                             refcount[key] -= 1
-                        del cache[key], refcount[key]
+                        if cache.archived(): cache.dump(key)
+                        try: del cache[key]
+                        except KeyError: pass #FIXME: possible none purged
+                        refcount.pop(key, None)
 
             # periodically compact the queue by eliminating duplicate keys
             # while preserving order of most recent access
@@ -821,7 +846,8 @@ class lru_cache(object):
         ignore = self.__state__['ignore']
         tol = self.__state__['tol']
         deep = self.__state__['deep']
-        return (self.__class__, (maxsize, cache, keymap, ignore, tol, deep))
+        purge = self.__state__['purge']
+        return (self.__class__, (maxsize, cache, keymap, ignore, tol, deep, purge))
 
 
 class mru_cache(object):
@@ -832,6 +858,7 @@ class mru_cache(object):
     not re-evaluated.  To avoid memory issues, a maximum cache size is imposed.
     For caches with an archive, the full cache dumps to archive upon reaching
     maxsize. For caches without an archive, the MRU algorithm manages the cache.
+    Caches with an archive will use the latter behavior when 'purge' is False.
     This decorator takes an integer tolerance 'tol', equal to the number of
     decimal places to which it will round off floats, and a bool 'deep' for
     whether the rounding on inputs will be 'shallow' or 'deep'.  Note that
@@ -844,9 +871,10 @@ class mru_cache(object):
     maxsize = maximum cache size
     cache = storage hashmap (default is {})
     keymap = cache key encoder (default is keymaps.hashmap(flat=True))
+    ignore = function argument names and indicies to 'ignore' (default is None)
     tol = integer tolerance for rounding (default is None)
     deep = boolean for rounding depth (default is False, i.e. 'shallow')
-    ignore = function argument names and indicies to 'ignore' (default is None)
+    purge = boolean for purge cache to archive at maxsize (default is True)
 
     If *maxsize* is None, this cache will grow without bound.
 
@@ -875,7 +903,7 @@ class mru_cache(object):
 
     See: http://en.wikipedia.org/wiki/Cache_algorithms#Most_Recently_Used
     """
-    def __init__(self, maxsize=100, cache=None, keymap=None, ignore=None, tol=None, deep=False):
+    def __init__(self, maxsize=100, cache=None, keymap=None, ignore=None, tol=None, deep=False, purge=True):
         if maxsize == 0:
             return no_cache(cache=cache, keymap=keymep, ignore=ignore, tol=tol, deep=deep)
         if maxsize is None:
@@ -903,6 +931,7 @@ class mru_cache(object):
             'roundargs': rounded_args,
             'tol': tol,
             'deep': deep,
+            'purge': purge,
         }
         return
 
@@ -919,6 +948,7 @@ class mru_cache(object):
         keymap = self.__state__['keymap']
         ignore = self.__state__['ignore']
         rounded_args = self.__state__['roundargs']
+        purge = self.__state__['purge']
 
         # lookup optimizations (ugly but fast)
         queue_append, queue_popleft = queue.append, queue.popleft
@@ -932,7 +962,8 @@ class mru_cache(object):
             try:
                 # get cache entry
                 result = cache[key]
-                queue.remove(key)
+                try: queue.remove(key)
+                except ValueError: pass
                 stats[HIT] += 1
             except KeyError:
                 # if not in cache, look in archive
@@ -949,12 +980,16 @@ class mru_cache(object):
 
                 # purge cache
                 if _len(cache) > maxsize:
-                    if cache.archived():
+                    #XXX: better: if cache is cache.archive ?
+                    if cache.archived() and purge:
                         cache.dump()
                         cache.clear() 
                         queue.clear()
                     else: # purge most recently used cache entry
-                        del cache[queue_pop()]
+                        k = queue_pop()
+                        if cache.archived(): cache.dump(k)
+                        try: del cache[k]
+                        except KeyError: pass #FIXME: possible none purged
 
             # record recent use of this key
             queue_append(key)
@@ -1027,7 +1062,8 @@ class mru_cache(object):
         ignore = self.__state__['ignore']
         tol = self.__state__['tol']
         deep = self.__state__['deep']
-        return (self.__class__, (maxsize, cache, keymap, ignore, tol, deep))
+        purge = self.__state__['purge']
+        return (self.__class__, (maxsize, cache, keymap, ignore, tol, deep, purge))
 
 
 class rr_cache(object):
@@ -1038,6 +1074,7 @@ class rr_cache(object):
     not re-evaluated.  To avoid memory issues, a maximum cache size is imposed.
     For caches with an archive, the full cache dumps to archive upon reaching
     maxsize. For caches without an archive, the RR algorithm manages the cache.
+    Caches with an archive will use the latter behavior when 'purge' is False.
     This decorator takes an integer tolerance 'tol', equal to the number of
     decimal places to which it will round off floats, and a bool 'deep' for
     whether the rounding on inputs will be 'shallow' or 'deep'.  Note that
@@ -1050,9 +1087,10 @@ class rr_cache(object):
     maxsize = maximum cache size
     cache = storage hashmap (default is {})
     keymap = cache key encoder (default is keymaps.hashmap(flat=True))
+    ignore = function argument names and indicies to 'ignore' (default is None)
     tol = integer tolerance for rounding (default is None)
     deep = boolean for rounding depth (default is False, i.e. 'shallow')
-    ignore = function argument names and indicies to 'ignore' (default is None)
+    purge = boolean for purge cache to archive at maxsize (default is True)
 
     If *maxsize* is None, this cache will grow without bound.
 
@@ -1081,7 +1119,7 @@ class rr_cache(object):
 
     http://en.wikipedia.org/wiki/Cache_algorithms#Random_Replacement
     """
-    def __init__(self, maxsize=100, cache=None, keymap=None, ignore=None, tol=None, deep=False):
+    def __init__(self, maxsize=100, cache=None, keymap=None, ignore=None, tol=None, deep=False, purge=True):
         if maxsize == 0:
             return no_cache(cache=cache, keymap=keymep, ignore=ignore, tol=tol, deep=deep)
         if maxsize is None:
@@ -1109,6 +1147,7 @@ class rr_cache(object):
             'roundargs': rounded_args,
             'tol': tol,
             'deep': deep,
+            'purge': purge,
         }
         return
 
@@ -1123,6 +1162,7 @@ class rr_cache(object):
         keymap = self.__state__['keymap']
         ignore = self.__state__['ignore']
         rounded_args = self.__state__['roundargs']
+        purge = self.__state__['purge']
 
         def wrapper(*args, **kwds):
             from random import choice #XXX: biased?
@@ -1149,11 +1189,15 @@ class rr_cache(object):
 
                 # purge cache
                 if _len(cache) > maxsize:
-                    if cache.archived():
+                    #XXX: better: if cache is cache.archive ?
+                    if cache.archived() and purge:
                         cache.dump()
                         cache.clear() 
                     else: # purge random cache entry
-                        del cache[choice(list(cache.keys()))]
+                        key = choice(list(cache.keys()))
+                        if cache.archived(): cache.dump(key)
+                        try: del cache[key]
+                        except KeyError: pass #FIXME: possible none purged
             return result
 
         def archive(obj):
@@ -1222,7 +1266,8 @@ class rr_cache(object):
         ignore = self.__state__['ignore']
         tol = self.__state__['tol']
         deep = self.__state__['deep']
-        return (self.__class__, (maxsize, cache, keymap, ignore, tol, deep))
+        purge = self.__state__['purge']
+        return (self.__class__, (maxsize, cache, keymap, ignore, tol, deep, purge))
 
 
 if __name__ == '__main__':

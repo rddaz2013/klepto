@@ -1,13 +1,15 @@
 #!/usr/bin/env python
 #
 # Author: Mike McKerns (mmckerns @caltech and @uqfoundation)
-# Copyright (c) 2013-2015 California Institute of Technology.
+# Copyright (c) 2013-2016 California Institute of Technology.
+# Copyright (c) 2016-2017 The Uncertainty Quantification Foundation.
 # License: 3-clause BSD.  The full license text is available at:
 #  - http://trac.mystic.cacr.caltech.edu/project/pathos/browser/klepto/LICENSE
 
 #FIXME: klepto's caches ignore names/index, however ignore should be in keymap
 
 import inspect
+from klepto.tools import IS_PYPY
 def signature(func, variadic=True, markup=True, safe=False):
     """get the input signature of a function
 
@@ -70,7 +72,7 @@ def signature(func, variadic=True, markup=True, safe=False):
     """
     TINY_FAIL = None,None  #XXX: or (),{} ?
     LONG_FAIL = None,None,None,None #XXX: or (),{},'','' ?
-    if safe and inspect.isbuiltin(func):
+    if safe and inspect.isbuiltin(func) and not IS_PYPY:
         return LONG_FAIL if variadic else TINY_FAIL
 
     #"""fixed: if True, include any 'fixed' args in returned keywords"""
@@ -134,7 +136,8 @@ def signature(func, variadic=True, markup=True, safe=False):
         defaults = dict((k,v) for (k,v) in defaults.items() if k not in _fixed)
         defaults.update(dict((X+k,v) for (k,v) in _fixed.items()))
 
-    if inspect.ismethod(func) and func.im_self: # then it's a bound method
+    if inspect.ismethod(func) and getattr(func, 'im_self', func.__self__):
+        # then it's a bound method
         explicit = explicit[1:] #XXX: correct to remove 'self' ?
 
     if variadic:

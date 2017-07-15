@@ -6,7 +6,8 @@
 
 # Forked by: Mike McKerns (December 2013)
 # Author: Mike McKerns (mmckerns @caltech and @uqfoundation)
-# Copyright (c) 2013-2015 California Institute of Technology.
+# Copyright (c) 2013-2016 California Institute of Technology.
+# Copyright (c) 2016-2017 The Uncertainty Quantification Foundation.
 # License: 3-clause BSD.  The full license text is available at:
 #  - http://trac.mystic.cacr.caltech.edu/project/pathos/browser/klepto/LICENSE
 """
@@ -192,7 +193,7 @@ class NumpyPickler(Pickler):
            temporaries.
     """
 
-    def __init__(self, filename, compress=0, cache_size=10):
+    def __init__(self, filename, compress=0, cache_size=10, protocol=None):
         self._filename = filename
         self._filenames = [filename, ]
         self.cache_size = cache_size
@@ -201,10 +202,11 @@ class NumpyPickler(Pickler):
             self.file = open(filename, 'wb')
         else:
             self.file = BytesIO()
+        if protocol is None:
+            protocol = dill.DEFAULT_PROTOCOL #NOTE: is self.proto
         # Count the number of npy files that we have created:
         self._npy_counter = 0
-        Pickler.__init__(self, self.file,
-                                protocol=dill.DEFAULT_PROTOCOL)
+        Pickler.__init__(self, self.file, protocol=protocol)
         # delayed import of numpy, to avoid tight coupling
         try:
             import numpy as np
@@ -331,7 +333,7 @@ class ZipNumpyUnpickler(NumpyUnpickler):
 ###############################################################################
 # Utility functions
 
-def dump(value, filename, compress=0, cache_size=100):
+def dump(value, filename, compress=0, cache_size=100, protocol=None):
     """Fast persistence of an arbitrary Python object into a files, with
     dedicated storage for numpy arrays.
 
@@ -351,6 +353,11 @@ def dump(value, filename, compress=0, cache_size=100):
         for in-memory compression. Note that this is just an order of
         magnitude estimate and that for big arrays, the code will go
         over this value at dump and at load time.
+    protocol: integer
+        The value of the pickle protocol (see serializer documentation
+        for valid values). Generally, 0 is the oldest, with increasing
+        integers for newer protocols, and -1 a shortcut for the highest
+        protocol.
 
     Returns
     -------
@@ -382,7 +389,7 @@ def dump(value, filename, compress=0, cache_size=100):
             )
     try:
         pickler = NumpyPickler(filename, compress=compress,
-                               cache_size=cache_size)
+                               cache_size=cache_size, protocol=protocol)
         pickler.dump(value)
         pickler.close()
     finally:

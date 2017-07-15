@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 #
 # Author: Mike McKerns (mmckerns @caltech and @uqfoundation)
-# Copyright (c) 2013-2015 California Institute of Technology.
+# Copyright (c) 2013-2016 California Institute of Technology.
+# Copyright (c) 2016-2017 The Uncertainty Quantification Foundation.
 # License: 3-clause BSD.  The full license text is available at:
 #  - http://trac.mystic.cacr.caltech.edu/project/pathos/browser/klepto/LICENSE
 
@@ -85,10 +86,17 @@ string.encodings = encodings
 def serializers(): #FIXME: could be much smarter
     """return a tuple of string names of serializers"""
     try:
-        import cPickle #XXX: could check this faster
-        return (None, 'pickle', 'json', 'cPickle', 'dill')
+        import imp
+        imp.find_module('cPickle')
+        serializers = (None, 'pickle', 'json', 'cPickle', 'dill')
     except ImportError:
-        return (None, 'pickle', 'json', 'dill')
+        serializers = (None, 'pickle', 'json', 'dill')
+    try:
+        import imp
+        imp.find_module('cloudpickle')
+        return serializers + ('cloudpickle',)
+    except ImportError:
+        return serializers
 
 
 def pickle(object, serializer=None, **kwds):

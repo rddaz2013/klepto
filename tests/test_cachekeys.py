@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 #
 # Author: Mike McKerns (mmckerns @caltech and @uqfoundation)
-# Copyright (c) 2014-2015 California Institute of Technology.
+# Copyright (c) 2014-2016 California Institute of Technology.
+# Copyright (c) 2016-2017 The Uncertainty Quantification Foundation.
 # License: 3-clause BSD.  The full license text is available at:
 #  - http://trac.mystic.cacr.caltech.edu/project/pathos/browser/klepto/LICENSE
 
@@ -46,25 +47,25 @@ def runme(arxiv, expected=None):
     pm = picklemap(serializer='dill')
 
     @memoized(cache=arxiv, keymap=pm)
-    def testit(x):
+    def doit(x):
         return x
 
-    testit(1)
-    testit('2')
-    testit(data)
-    testit(lambda x:x**2)
+    doit(1)
+    doit('2')
+    doit(data)
+    doit(lambda x:x**2)
 
-    testit.load()
-    testit.dump()
-    c = testit.__cache__()
+    doit.load()
+    doit.dump()
+    c = doit.__cache__()
     r = getattr(c, '__archive__', '')
-    info = testit.info()
+    info = doit.info()
     ck = c.keys()
     rk = r.keys() if r else ck
-#   print(type(c))
-#   print(c)
-#   print(r)
-#   print(info)
+   #print(type(c))
+   #print(c)
+   #print(r)
+   #print(info)
 
     # check keys are identical in cache and archive
     assert sorted(ck) == sorted(rk)
@@ -80,7 +81,7 @@ def runme(arxiv, expected=None):
         assert (info.hit, info.miss, info.load) == (0, xx, 0)
     return
 
-def test_cache(archive, name, delete=True):
+def _test_cache(archive, name, delete=True):
 
     arname = 'xxxxxx'+ str(name)
     acname = 'xxxyyy'+ str(name)
@@ -112,16 +113,18 @@ def test_cache(archive, name, delete=True):
     return
 
 
-if not nprun:
+def test_archives():
+    if not nprun:
+        count = 0
+        for archive in archives:
+            _test_cache(archive, count, delete=False)
+            count += 1
+
     count = 0
     for archive in archives:
-        test_cache(archive, count, delete=False)
+        _test_cache(archive, count, delete=True)
         count += 1
 
-count = 0
-for archive in archives:
-    test_cache(archive, count, delete=True)
-    count += 1
 
-
-# EOF
+if __name__ == '__main__':
+    test_archives()
