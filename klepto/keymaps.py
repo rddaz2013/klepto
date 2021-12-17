@@ -32,12 +32,8 @@ def __chain__(x, y):
     "chain two keymaps: calls 'x' then 'y' on object to produce y(x(object))"
     if x is None:
         x,y = y,x
-    if y is None:
-        f = lambda z: x(z)
-    else:
-        f = lambda z: y(x(z))
-    if y is None: msg = ""
-    else: msg = "calls %s then %s" % (x,y)
+    f = (lambda z: x(z)) if y is None else (lambda z: y(x(z)))
+    msg = "" if y is None else "calls %s then %s" % (x,y)
     f.__doc__ = msg
     f.__inner__ = x
     f.__outer__ = y
@@ -117,10 +113,7 @@ class keymap(object):
             msg += "%s='%s', " % (self.__stub__, self.__type__)
        #msg += 'inner=%s)' % bool(self.inner)
         if msg: msg = msg.rstrip().rstrip(',')
-        if bool(self.inner):
-            msg += ')*'
-        else:
-            msg += ')'
+        msg += ')*' if bool(self.inner) else ')'
         return msg
 
     def __get_sentinel(self):
@@ -128,9 +121,7 @@ class keymap(object):
             return self._mark[0]
         return NOSENTINEL #XXX: or None?
     def __sentinel(self, mark):
-        if mark != NOSENTINEL:
-            self._mark = (mark,)
-        else: self._mark = None
+        self._mark = (mark, ) if mark != NOSENTINEL else None
 
     def __call__(self, *args, **kwds):
         'generate a key from optionally typed positional and keyword arguments'

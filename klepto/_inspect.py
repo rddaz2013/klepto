@@ -108,12 +108,9 @@ def signature(func, variadic=True, markup=True, safe=False):
 
     if not arg_defaults or not arg_names:
         defaults = {}
-        explicit = tuple(arg_names) or ()
     else:
         defaults = dict(zip(arg_names[-len(arg_defaults):],arg_defaults))
-        explicit = tuple(arg_names) or ()  # always return all names
-       #explicit = tuple(arg_names[:-len(arg_defaults)]) # only return args
-
+    explicit = tuple(arg_names) or ()
     # for a partial, the first p_args are now at fixed values
     _fixed = dict(zip(arg_names[:len(p_args)],p_args))
 
@@ -126,15 +123,14 @@ def signature(func, variadic=True, markup=True, safe=False):
 
     # for a partial, arguments given in p_kwds have new defaults
     defaults.update(p_kwds)
-    if markup: X = '!'
-    else: X = ''
+    X = '!' if markup else ''
     # remove args 'fixed' by the partial; prepend 'unsettable' args with '!'
     explicit = tuple(X+i if i in p_kwds else i for i in explicit \
                                                  if i not in _fixed)
     if fixed:
        #defaults.update(_fixed)
-        defaults = dict((k,v) for (k,v) in defaults.items() if k not in _fixed)
-        defaults.update(dict((X+k,v) for (k,v) in _fixed.items()))
+        defaults = {k: v for (k,v) in defaults.items() if k not in _fixed}
+        defaults.update({X+k: v for (k,v) in _fixed.items()})
 
     if inspect.ismethod(func) and getattr(func, 'im_self', func.__self__):
         # then it's a bound method
@@ -195,8 +191,8 @@ def validate(func, *args, **kwds):
         p_required = set()
 
     # get bad args/kwds from markup
-    bad_args = set(i.strip('!') for i in named if i.startswith('!'))
-    bad_kwds = set(i.strip('!') for i in defaults if i.startswith('!'))
+    bad_args = {i.strip('!') for i in named if i.startswith('!')}
+    bad_kwds = {i.strip('!') for i in defaults if i.startswith('!')}
     # strip markup
     named, defaults = strip_markup(named, defaults)
 
@@ -353,7 +349,7 @@ def keygen(*ignored, **kwds):
 def strip_markup(names, defaults):
     """strip markup ('!') from function argument names and defaults"""
     names = tuple(i.strip('!') for i in names)
-    defaults = dict((k,v) for (k,v) in defaults.items() if not k.startswith('!'))
+    defaults = {k: v for (k,v) in defaults.items() if not k.startswith('!')}
     return names, defaults
 
 
@@ -406,8 +402,8 @@ def _keygen(func, ignored, *args, **kwds):
 
     # decompose the list of things to ignore to names and indicies
     if isinstance(ignored, (str,int)): ignored = [ignored]
-    index_to_ignore = set(i for i in ignored if isinstance(i,int))
-    names_to_ignore = set(i for i in ignored if isinstance(i,str))
+    index_to_ignore = {i for i in ignored if isinstance(i,int)}
+    names_to_ignore = {i for i in ignored if isinstance(i,str)}
 
     # if ignore self, remove self instead of NULL it
     if inspect.isfunction(func):
@@ -435,8 +431,8 @@ def _keygen(func, ignored, *args, **kwds):
 
     # cross-populate names_to_ignore and index_to_ignore for explicitly_named
     names_index = dict(enumerate(explicitly_named))
-    _index = set(i for (i,k) in names_index.items() if k in names_to_ignore)
-    _names = set(k for (i,k) in names_index.items() if i in index_to_ignore)
+    _index = {i for (i,k) in names_index.items() if k in names_to_ignore}
+    _names = {k for (i,k) in names_index.items() if i in index_to_ignore}
     names_to_ignore = names_to_ignore.union(_names)
     index_to_ignore = index_to_ignore.union(_index)
 

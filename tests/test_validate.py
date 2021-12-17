@@ -32,9 +32,6 @@ def test_partial_foo_xy():
         assert str(res2)[:20] == str(TypeError("foo() takes at most 5 arguments (7 given)"))[:20] # PYPY TypeError is slightly different
     elif hex(sys.hexversion) < '0x30300f0': # all versions slightly different
         assert str(res2)[:20] == str(re_2)[:20]
-    else:
-        pass # python 3.3 gives "foo() got multiple values for argument 'b'"
-
     try:
         res1 = p()
         res2 = Exception()
@@ -52,9 +49,6 @@ def test_partial_foo_xy():
         assert str(res2) == str(TypeError("foo() takes at least 3 arguments (2 given)"))
     elif hex(sys.hexversion) < '0x30300f0': # all versions slightly different
         assert str(res2)[:21] == str(re_2)[:21]
-    else:
-        pass # python 3.3 gives "foo() missing 1 required positional argument 'z'"
-
     try:
         res1 = p(1,2,3,4,r=5)
         res2 = Exception()
@@ -72,8 +66,6 @@ def test_partial_foo_xy():
         assert str(res2)[:20] == str(TypeError("foo() takes at most 5 arguments (7 given)"))[:20] # PYPY TypeError is slightly different
     elif hex(sys.hexversion) < '0x30300f0': # all versions slightly different
         assert str(res2)[:20] == str(re_2)[:20]
-    else:
-        pass # python 3.3 gives "foo() got unexpected keyword argument 'r'"
 
 def test_partial_foo_xx():
     p = partial(foo, 0,x=4)
@@ -94,8 +86,6 @@ def test_partial_foo_xx():
         assert str(res2) == str(TypeError("foo() got multiple values for keyword argument 'x'"))
     elif hex(sys.hexversion) < '0x30300f0': # all versions slightly different
         assert str(res2)[:25] == str(re_2)[:25]
-    else:
-        pass # python 3.3 gives "foo() got unexpected keyword argument 'r'"
 
 def test_partial_foo_xyzabcde():
     p = partial(foo, 0,1,2,3,4,5,6,7)
@@ -116,8 +106,6 @@ def test_partial_foo_xyzabcde():
         assert str(res2) == str(TypeError("foo() takes at most 5 arguments (8 given)"))
     elif hex(sys.hexversion) < '0x30300f0': # all versions slightly different
         assert str(res2)[:20] == str(re_2)[:20]
-    else:
-        pass # python 3.3 gives "foo() takes from 3 to 5 positional arguments but 8 were given"
 
 def test_partial_foo_xzb():
     p = partial(foo, 0,z=1,b=2)
@@ -138,8 +126,6 @@ def test_partial_foo_xzb():
         assert str(res2)[:20] == str(TypeError("foo() takes at least 3 arguments (3 given)"))[:20] # PYPY TypeError is slightly different
     elif hex(sys.hexversion) < '0x30300f0': # all versions slightly different
         assert str(res2)[:21] == str(re_2)[:21]
-    else:
-        pass # python 3.3 gives "foo() missing 1 required positional argument: 'y'"
 
 def test_partial_foo_xr():
     p = partial(foo, 0,r=4)
@@ -180,10 +166,7 @@ def test_partial_foo_xa():
         assert str(res2)[:20] == str(TypeError("foo() takes at least 3 arguments (3 given)"))[:20] # PYPY TypeError is slightly different
     elif hex(sys.hexversion) < '0x30300f0': # all versions slightly different
         assert str(res2)[:21] == str(re_2)[:21]
-    else:
-        pass # python 3.3 gives "foo() missing 1 required positional argument: 'z'"
-
-    assert validate(p,1,2) == None #XXX: better return ((1,2),{}) ?
+    assert validate(p,1,2) is None
     '''
     >>> p(1,2)
     7

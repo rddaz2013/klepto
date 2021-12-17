@@ -83,7 +83,7 @@ def check_basic(archive):
     assert d['b'] == '1'
     assert d['c'] == min
     assert d['d'](2) == squared(2)
-    assert d['e'] == None
+    assert d['e'] is None
     return
 
 # check archiving numpy stuff

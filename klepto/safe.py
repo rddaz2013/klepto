@@ -157,8 +157,7 @@ class no_cache(object):
 
         def archive(obj):
             """Replace the cache archive"""
-            if isinstance(obj, archive_dict): cache.archive = obj.archive
-            else: cache.archive = obj
+            cache.archive = obj.archive if isinstance(obj, archive_dict) else obj
 
         def key(*args, **kwds):
             """Get the cache key for the given *args,**kwds"""
@@ -345,8 +344,7 @@ class inf_cache(object):
 
         def archive(obj):
             """Replace the cache archive"""
-            if isinstance(obj, archive_dict): cache.archive = obj.archive
-            else: cache.archive = obj
+            cache.archive = obj.archive if isinstance(obj, archive_dict) else obj
 
         def key(*args, **kwds):
             """Get the cache key for the given *args,**kwds"""
@@ -565,8 +563,7 @@ class lfu_cache(object):
 
         def archive(obj):
             """Replace the cache archive"""
-            if isinstance(obj, archive_dict): cache.archive = obj.archive
-            else: cache.archive = obj
+            cache.archive = obj.archive if isinstance(obj, archive_dict) else obj
 
         def key(*args, **kwds):
             """Get the cache key for the given *args,**kwds"""
@@ -818,8 +815,7 @@ class lru_cache(object):
 
         def archive(obj):
             """Replace the cache archive"""
-            if isinstance(obj, archive_dict): cache.archive = obj.archive
-            else: cache.archive = obj
+            cache.archive = obj.archive if isinstance(obj, archive_dict) else obj
 
         def key(*args, **kwds):
             """Get the cache key for the given *args,**kwds"""
@@ -1045,8 +1041,7 @@ class mru_cache(object):
 
         def archive(obj):
             """Replace the cache archive"""
-            if isinstance(obj, archive_dict): cache.archive = obj.archive
-            else: cache.archive = obj
+            cache.archive = obj.archive if isinstance(obj, archive_dict) else obj
 
         def key(*args, **kwds):
             """Get the cache key for the given *args,**kwds"""
@@ -1259,8 +1254,7 @@ class rr_cache(object):
 
         def archive(obj):
             """Replace the cache archive"""
-            if isinstance(obj, archive_dict): cache.archive = obj.archive
-            else: cache.archive = obj
+            cache.archive = obj.archive if isinstance(obj, archive_dict) else obj
 
         def key(*args, **kwds):
             """Get the cache key for the given *args,**kwds"""

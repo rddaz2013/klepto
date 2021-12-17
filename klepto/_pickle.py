@@ -131,9 +131,10 @@ class NDArrayWrapper(object):
             array = unpickler.np.load(filename)
         # Reconstruct subclasses. This does not work with old
         # versions of numpy
-        if (hasattr(array, '__array_prepare__')
-                and not self.subclass in (unpickler.np.ndarray,
-                                      unpickler.np.memmap)):
+        if hasattr(array, '__array_prepare__') and self.subclass not in (
+            unpickler.np.ndarray,
+            unpickler.np.memmap,
+        ):
             # We need to reconstruct another subclass
             new_array = unpickler.np.core.multiarray._reconstruct(
                     self.subclass, (0,), 'b')
@@ -198,10 +199,7 @@ class NumpyPickler(Pickler):
         self._filenames = [filename, ]
         self.cache_size = cache_size
         self.compress = compress
-        if not self.compress:
-            self.file = open(filename, 'wb')
-        else:
-            self.file = BytesIO()
+        self.file = open(filename, 'wb') if not self.compress else BytesIO()
         if protocol is None:
             protocol = dill.DEFAULT_PROTOCOL #NOTE: is self.proto
         # Count the number of npy files that we have created:
@@ -225,11 +223,9 @@ class NumpyPickler(Pickler):
             # The meta data is stored in the container, and the core
             # numerics in a z-file
             _, init_args, state = array.__reduce__()
-            # the last entry of 'state' is the data itself
-            zfile = open(filename, 'wb')
-            write_zfile(zfile, state[-1],
-                                compress=self.compress)
-            zfile.close()
+            with open(filename, 'wb') as zfile:
+                write_zfile(zfile, state[-1],
+                                    compress=self.compress)
             state = state[:-1]
             container = ZNDArrayWrapper(os.path.basename(filename),
                                             init_args, state)
@@ -267,10 +263,9 @@ class NumpyPickler(Pickler):
 
     def close(self):
         if self.compress:
-            zfile = open(self._filename, 'wb')
-            write_zfile(zfile,
-                        self.file.getvalue(), self.compress)
-            zfile.close()
+            with open(self._filename, 'wb') as zfile:
+                write_zfile(zfile,
+                            self.file.getvalue(), self.compress)
 
 
 class NumpyUnpickler(Unpickler):

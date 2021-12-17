@@ -298,8 +298,4 @@ except ImportError:
    #print ("    sqlalchemy %s" % sqlalchemy_version)
     print ("***********************************************************\n")
 
-
-if __name__=='__main__':
-    pass
-
 # end of file

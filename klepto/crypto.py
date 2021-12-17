@@ -36,7 +36,13 @@ hash.__doc__ = \
 def encodings():
     """return a tuple of available encodings and string-like types"""
     try:
-        algs = set([modname for importer, modname, ispkg in pkgutil.walk_packages(path=[os.path.dirname(codecs.__file__)], prefix='')])
+        algs = {
+            modname
+            for importer, modname, ispkg in pkgutil.walk_packages(
+                path=[os.path.dirname(codecs.__file__)], prefix=''
+            )
+        }
+
     except:
         algs = set()
     algs = algs.union(set(codecs.aliases.aliases.values()))

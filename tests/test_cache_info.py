@@ -46,7 +46,6 @@ def test_info():
 
     # clean-up
     if os.path.exists('cache.pkl'): os.remove('cache.pkl')
-
    #print ("WITHOUT ARCHIVE")
     results = [_test_hits(cache, maxsize=100,
                           rangelimit=20, tries=100) for cache in caches]
@@ -82,7 +81,6 @@ def test_info():
    #    msg += "%s" % str(_test_hits(cache, maxsize=100, 
    #                                 rangelimit=20, tries=100))
    #    print (msg)
-
    #print ("\nWITH ARCHIVE")
     results = [_test_hits(cache, maxsize=100, rangelimit=20,
                           tries=100, archived=True) for cache in caches]
@@ -90,10 +88,7 @@ def test_info():
     if os.path.exists('cache.pkl'): os.remove('cache.pkl')
 
     x = results[0]
-    if PY32:
-        assert (x.hit, x.miss, x.load, x.maxsize, x.size) == (11,89,0,100,89)
-    else:
-        assert (x.hit, x.miss, x.load, x.maxsize, x.size) == (11,89,0,100,89)
+    assert (x.hit, x.miss, x.load, x.maxsize, x.size) == (11,89,0,100,89)
     x = results[1]
     if PY32:
         assert (x.hit, x.miss, x.load, x.maxsize, x.size) == (10,66,24,100,90)
@@ -115,21 +110,16 @@ def test_info():
     else:
         assert (x.hit, x.miss, x.load, x.maxsize, x.size) == (11,32,57,None,89)
     x = results[5]
-    if PY32:
-        assert (x.hit, x.miss, x.load, x.maxsize, x.size) == (0,25,75,0,0)
-    else:
-        assert (x.hit, x.miss, x.load, x.maxsize, x.size) == (0,25,75,0,0)
+    assert (x.hit, x.miss, x.load, x.maxsize, x.size) == (0,25,75,0,0)
    #for cache in caches:
    #    msg = cache.__name__ + ":"
    #    msg += "%s" % str(_test_hits(cache, maxsize=100,
    #                                 rangelimit=20, tries=100, archived=True))
    #    print (msg)
-
    ### again, w/o purging ###
 
     # clean-up
     if os.path.exists('cache.pkl'): os.remove('cache.pkl')
-
    #print ("WITHOUT ARCHIVE")
     results = [_test_hits(cache, maxsize=50,
                           rangelimit=20, tries=100) for cache in caches]
@@ -168,7 +158,6 @@ def test_info():
    #    msg += "%s" % str(_test_hits(cache, maxsize=50, 
    #                                 rangelimit=20, tries=100))
    #    print (msg)
-
    #print ("\nWITH ARCHIVE")
     results = [_test_hits(cache, maxsize=50, rangelimit=20,
                           tries=100, archived=True) for cache in caches]

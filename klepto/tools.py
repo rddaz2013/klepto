@@ -51,8 +51,7 @@ def _b(message):
     return message
 
 
-if __name__=='__main__':
-    pass
+pass
 
 
 # End of file
