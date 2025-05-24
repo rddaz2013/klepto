@@ -2,9 +2,9 @@
 #
 # Author: Mike McKerns (mmckerns @caltech and @uqfoundation)
 # Copyright (c) 2013-2016 California Institute of Technology.
-# Copyright (c) 2016-2017 The Uncertainty Quantification Foundation.
+# Copyright (c) 2016-2025 The Uncertainty Quantification Foundation.
 # License: 3-clause BSD.  The full license text is available at:
-#  - http://trac.mystic.cacr.caltech.edu/project/pathos/browser/klepto/LICENSE
+#  - https://github.com/uqfoundation/klepto/blob/master/LICENSE
 
 import os
 import sys
@@ -16,7 +16,7 @@ __hash = hash
 def algorithms():
     """return a tuple of available hash algorithms"""
     try:
-        algs =  hashlib.algorithms
+        algs =  tuple(hashlib.algorithms_available)
     except:
         algs = ('md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512')
     return (None,) + algs
@@ -45,7 +45,9 @@ def encodings():
         utype = ('unicode','bytes')
     except NameError:
         utype = tuple()
-        pop = [t for t in algs if t.endswith('_codec')] + ['tactis']
+        if 'tactis' in algs:
+            algs.remove('tactis')
+        pop = [t for t in algs if t.endswith('_codec')]
         [algs.remove(t) for t in pop] #FIXME: giving up here for 3.x...
         # (any '*_codec' throws 'str' does not support the buffer interface)
     stype = ('str','repr')
@@ -85,18 +87,13 @@ string.encodings = encodings
 
 def serializers(): #FIXME: could be much smarter
     """return a tuple of string names of serializers"""
-    try:
-        import imp
-        imp.find_module('cPickle')
-        serializers = (None, 'pickle', 'json', 'cPickle', 'dill')
-    except ImportError:
-        serializers = (None, 'pickle', 'json', 'dill')
-    try:
-        import imp
-        imp.find_module('cloudpickle')
-        return serializers + ('cloudpickle',)
-    except ImportError:
-        return serializers
+    serializers = (None, 'pickle', 'json', 'dill')
+    from importlib import util as imp
+    if imp.find_spec('cloudpickle'):
+        serializers += ('cloudpickle',)
+    if imp.find_spec('jsonpickle'):
+        serializers += ('jsonpickle',)
+    return serializers
 
 
 def pickle(object, serializer=None, **kwds):

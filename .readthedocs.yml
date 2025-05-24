@@ -1,0 +1,20 @@
+# readthedocs configuration file
+# see https://docs.readthedocs.io/en/stable/config-file/v2.html
+version: 2
+
+# configure
+sphinx:
+  configuration: docs/source/conf.py
+
+# build
+build:
+  os: ubuntu-22.04
+  tools:
+    python: "3.10"
+
+# install
+python:
+  install:
+    - method: pip
+      path: .
+    - requirements: docs/requirements.txt

@@ -2,9 +2,9 @@
 #
 # Author: Mike McKerns (mmckerns @caltech and @uqfoundation)
 # Copyright (c) 2013-2016 California Institute of Technology.
-# Copyright (c) 2016-2017 The Uncertainty Quantification Foundation.
+# Copyright (c) 2016-2025 The Uncertainty Quantification Foundation.
 # License: 3-clause BSD.  The full license text is available at:
-#  - http://trac.mystic.cacr.caltech.edu/project/pathos/browser/klepto/LICENSE
+#  - https://github.com/uqfoundation/klepto/blob/master/LICENSE
 
 import sys
 from functools import partial
@@ -150,13 +150,10 @@ def test_keygen_foo():
     assert foo.call() == 11
     h = hashmap(algorithm='md5')
     foo.register(h)
-    if hex(sys.hexversion) < '0x30300f0':
-        _hash1 = '2c8d801f4078eba873a5fb6909ab0f8d'
-        _hash2 = '949883b97d9fda9c8fe6bd468fe90af9'
-    else: # python 3.3 has hash randomization, apparently
-        from klepto.crypto import hash
-        _hash1 = hash(res1, 'md5')
-        _hash2 = hash(res2, 'md5')
+    # hash randomization
+    from klepto.crypto import hash
+    _hash1 = hash(res1, 'md5')
+    _hash2 = hash(res2, 'md5')
     assert foo(0,1,z=10) == _hash1
     assert str(foo.keymap()) == str(h)
     assert foo.key() == _hash1
@@ -175,7 +172,11 @@ def test_special():
 
     
     if IS_PYPY: # builtins in PYPY are python functions
-        assert signature(pow, safe=True) == (('base', 'exponent', 'modulus'), {'modulus': None}, '', '')
+        if hex(sys.hexversion) < '0x3080cf0':
+            base, exp, mod = 'base', 'exponent', 'modulus'
+        else:
+            base, exp, mod = 'base', 'exp', 'mod'
+        assert signature(pow, safe=True) == ((base, exp, mod), {mod: None}, '', '')
     else:
         assert signature(pow, safe=True) == (None, None, None, None)
     assert signature(p, safe=True) == (None, None, None, None)

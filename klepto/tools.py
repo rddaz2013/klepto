@@ -2,9 +2,9 @@
 #
 # Author: Mike McKerns (mmckerns @caltech and @uqfoundation)
 # Copyright (c) 2013-2016 California Institute of Technology.
-# Copyright (c) 2016-2017 The Uncertainty Quantification Foundation.
+# Copyright (c) 2016-2025 The Uncertainty Quantification Foundation.
 # License: 3-clause BSD.  The full license text is available at:
-#  - http://trac.mystic.cacr.caltech.edu/project/pathos/browser/klepto/LICENSE
+#  - https://github.com/uqfoundation/klepto/blob/master/LICENSE
 """
 Assorted python tools
 
@@ -13,8 +13,6 @@ Main functions exported are::
 
 """
 
-from __future__ import absolute_import
-
 try:
     import ctypes
     # if using `pypy`, pythonapi is not found
@@ -22,10 +20,7 @@ try:
 except ImportError:
     IS_PYPY = False
 
-try:
-    from collections import namedtuple
-except ImportError:
-    from ._namedtuple import namedtuple
+from collections import namedtuple
 CacheInfo = namedtuple("CacheInfo", ['hit','miss','load','maxsize','size'])
 
 __all__ = ['isiterable']
@@ -44,11 +39,8 @@ def isiterable(x):
 
 def _b(message):
     """convert string to correct format for buffer object"""
-    import sys
-    if hex(sys.hexversion) >= '0x30000f0':
-        import codecs
-        return codecs.latin_1_encode(message)[0]
-    return message
+    import codecs
+    return codecs.latin_1_encode(message)[0]
 
 
 if __name__=='__main__':

@@ -2,52 +2,45 @@
 #
 # Author: Mike McKerns (mmckerns @caltech and @uqfoundation)
 # Copyright (c) 2013-2016 California Institute of Technology.
-# Copyright (c) 2016-2017 The Uncertainty Quantification Foundation.
+# Copyright (c) 2016-2025 The Uncertainty Quantification Foundation.
 # License: 3-clause BSD.  The full license text is available at:
-#  - http://trac.mystic.cacr.caltech.edu/project/pathos/browser/klepto/LICENSE
+#  - https://github.com/uqfoundation/klepto/blob/master/LICENSE
 """
 custom caching dict, which archives results to memory, file, or database
 """
-from __future__ import absolute_import
 import os
 import sys
 import shutil
 from random import random
 from pickle import PROTO, STOP
-try:
-  from collections import KeysView, ValuesView, ItemsView
-  _view = getattr(dict, 'viewkeys', False)
-  _view = True if _view else False # True if 2.7
-except ImportError:
-  _view = False
-import imp
-try:
-  imp.find_module('sqlalchemy')
+from collections.abc import KeysView, ValuesView, ItemsView
+from importlib import util as imp
+if imp.find_spec('sqlalchemy'):
   sql = True
   def __import_sql__():
       global sql
       import sqlalchemy as sql
-except ImportError:
+else:
   sql = None
-try:
-  imp.find_module('h5py')
+if imp.find_spec('h5py'):
   hdf = True
   def __import_hdf__():
-      global hdf
+      global hdf, np
       import h5py as hdf
-except ImportError:
+else:
   hdf = None
-try:
-  imp.find_module('pandas')
+if imp.find_spec('pandas'):
   pandas = True
   def __import_pandas__():
       global pandas
       import pandas
-except ImportError:
+else:
   pandas = None
+import json
 import dill
 from dill.source import getimportable
 from pox import mkdir, rmtree, walk
+from ._abc import archive
 from .crypto import hash
 from . import _pickle
 
@@ -56,11 +49,11 @@ __all__ = ['cache','dict_archive','null_archive','dir_archive',\
            'hdf_archive','hdfdir_archive']
 
 PREFIX = "K_"  # hash needs to be importable
-TEMP = "I_"    # indicates 'temporary' file
+TEMP = ".I_"    # indicates 'temporary' file
 #DEAD = "D_"    # indicates 'deleted' key
 
 
-def _to_frame(archive):
+def _to_frame(archive):#, keymap=None):
     '''convert a klepto archive to a pandas DataFrame'''
     if not pandas:
         raise ValueError('install pandas for dataframe support')
@@ -72,18 +65,35 @@ def _to_frame(archive):
     name = d.archive.name
     name = '' if name is None else name
     df = df.from_dict({name: d if cached else d.__asdict__()})
-    if cached: df = pandas.concat([df[name],df.from_dict({cache:d.archive.__asdict__()})[cache]],axis=1)
+    if cached:
+        if pandas.__version__ > '0.23':
+            df = pandas.concat([df[name],df.from_dict({cache:d.archive.__asdict__()})[cache]],axis=1,sort=False)
+        else:
+            df = pandas.concat([df[name],df.from_dict({cache:d.archive.__asdict__()})[cache]],axis=1)
    #df.sort_index(axis=1, ascending=False, inplace=True)
     df.columns.name = d.archive.__class__.__name__#.rsplit('_archive')[0]
     df.index.name = repr(d.archive.state)
+    '''
+    if len(df) and keymap is not None:
+        #FIXME: need a generalized inverse of keymap
+        #HACK: only works in certain special cases
+        from klepto.keymaps import _stub_decoder
+        #if isinstance(df.index[0], bytes): keymap = 'pickle'
+        #elif isinstance(df.index[0], (str, (u'').__class__)): keymap = 'repr'
+        #else: keymap = None
+        inv = _stub_decoder(keymap)
+        df.index = df.index.map(inv)#lambda k: list(inv(k))) #FIXME: correct?
+        #HACK end
+    '''
     return df
 
 
-def _from_frame(dataframe):
+def _from_frame(dataframe):#, keymap=None):
     '''convert a (formatted) pandas dataframe to a klepto archive'''
     if not pandas:
         raise ValueError('install pandas for dataframe support')
-    df = dataframe
+    #if keymap is None: keymap = lambda x:x #XXX: or keymap()?
+    df = dataframe #XXX: apply keymap here?
     d = df.to_dict()
     # is cached if has more than one column, one of which is named 'cache'
     cached = True if len(df.columns) > 1 else False
@@ -97,9 +107,9 @@ def _from_frame(dataframe):
         index = {}
     # should have at least one column; if so, get the name of the column
     name = df.columns[0] if len(df.columns) else None
-    # get the name of the  column -- this will be our cached data
+    # get the name of the column -- this will be our cached data
     store = df.columns[1] if cached else cache
-    # get the data from the first column
+    # get the data from the first column #XXX: apply keymap here?
     data = {} if name is None else dict((k,v) for (k,v) in d[name].items() if repr(v) not in ['nan','NaN'])
     # get the archive type, defaulting to dict_archive
     col = df.columns.name
@@ -111,7 +121,7 @@ def _from_frame(dataframe):
     d_ = getattr(archives, col, archives.dict_archive)
     # get the archive instance
     d_ = d_(name, data, cached, **index)
-    # if cached, add the cache data
+    # if cached, add the cache data #XXX: apply keymap here?
     if cached: d_.archive.update((k,v) for (k,v) in d.get(store,{}).items() if repr(v) not in ['nan','NaN'])
     return d_
 
@@ -121,8 +131,8 @@ class cache(dict):
     def __init__(self, *args, **kwds):
         """initialize a dictionary with an archive backend
 
-    Additional Inputs:
-        archive: instance of archive object
+    Args:
+        archive (archive, default=null_archive()): instance of archive object
         """
         self.__swap__ = null_archive()
         self.__archive__ = kwds.pop('archive', null_archive())
@@ -139,6 +149,16 @@ class cache(dict):
     def to_frame(self):
         return _to_frame(self)
     to_frame.__doc__ = _to_frame.__doc__
+    def popkeys(self, keys, *value):
+        """    D.popkeys(k[,d]) -> v, remove specified keys and return corresponding values.
+    If key in keys is not found, d is returned if given, otherwise KeyError is raised."""
+        if not hasattr(keys, '__iter__'):
+            return self.pop(keys, *value)
+        if len(value):
+            return [self.pop(k, *value) for k in keys]
+        memo = self.fromkeys(self.keys())
+        [memo.pop(k) for k in keys]
+        return [self.pop(k) for k in keys]
     def load(self, *args): #FIXME: archive may use key 'encoding' (dir_archive)
         """load archive contents
 
@@ -173,12 +193,12 @@ class cache(dict):
         if L > 1: raise TypeError("archived expected at most 1 argument, got %s" % str(L+1))
         if bool(on[0]):
             if not isinstance(self.__swap__, null_archive):
-                self.__swap__, self.__archive__ = self.__archive__, self.__swap__
-            elif isinstance(self.__archive__, null_archive):
+                self.__swap__, self.archive = self.archive, self.__swap__
+            elif isinstance(self.archive, null_archive):
                 raise ValueError("no valid archive has been set")
         else:
-            if not isinstance(self.__archive__, null_archive):
-                self.__swap__, self.__archive__ = self.__archive__, self.__swap__
+            if not isinstance(self.archive, null_archive):
+                self.__swap__, self.archive = self.archive, self.__swap__
     def sync(self, clear=False):
         """synchronize cache and archive contents
 
@@ -202,13 +222,15 @@ class cache(dict):
     def __get_archive(self):
        #if not isinstance(self.__archive__, null_archive):
        #    return
+        if not isinstance(self.__archive__, archive):
+            self.__archive__ = null_archive()
         return self.__archive__
     def __get_class(self):
        import klepto.archives as archives
-       return getattr(archives, self.__archive__.__class__.__name__)
+       return getattr(archives, self.archive.__class__.__name__)
     def __archive(self, archive):
         if not isinstance(self.__swap__, null_archive):
-            self.__swap__, self.__archive__ = self.__archive__, self.__swap__
+            self.__swap__, self.__archive__ = self.archive, self.__swap__
         self.__archive__ = archive
     # interface
     archive = property(__get_archive, __archive)
@@ -216,7 +238,7 @@ class cache(dict):
     pass
 
 
-class dict_archive(dict):
+class dict_archive(archive):
     """dictionary with an archive interface"""
     def __init__(self, *args, **kwds):
         """initialize a dictionary archive"""
@@ -228,7 +250,7 @@ class dict_archive(dict):
         return
     def __asdict__(self):
         """build a dictionary containing the archive contents"""
-        return dict(getattr(self,'iteritems',self.items)())
+        return dict(self.items())
     def __repr__(self):
         return "dict_archive(%s, cached=False)" % (self.__asdict__())
     __repr__.__doc__ = dict.__repr__.__doc__
@@ -239,41 +261,18 @@ class dict_archive(dict):
         adict = dict_archive(__magic_key_0192837465__=name)
         adict.update(self.__asdict__())
         return adict
+    def __drop__(self):
+        """drop the associated database
+
+      EXPERIMENTAL: This method is intended to remove artifacts external to
+      the instance. For a dict_archive there are none, so just call clear.
+        """
+        self.clear()
     # interface
-    def load(self, *args):
-        """does nothing. required to use an archive as a cache"""
-        return
-    dump = load
-    def archived(self, *on):
-        """check if the cache is a persistent archive"""
-        L = len(on)
-        if not L: return False
-        if L > 1: raise TypeError("archived expected at most 1 argument, got %s" % str(L+1))
-        raise ValueError("cannot toggle archive")
-    def sync(self, clear=False):
-        "does nothing. required to use an archive as a cache"
-        pass
-    def drop(self): #XXX: or actually drop the backend?
-        "set the current archive to NULL"
-        return self.__archive(None)
-    def open(self, archive):
-        "replace the current archive with the archive provided"
-        return self.__archive(archive)
-    def __get_archive(self):
-        return self
-    def __get_name(self):
-        return self.__state__['id']
-    def __get_state(self):
-        return self.__state__.copy()
-    def __archive(self, archive):
-        raise ValueError("cannot set new archive")
-    archive = property(__get_archive, __archive)
-    name = property(__get_name, __archive)
-    state = property(__get_state, __archive)
     pass
 
 
-class null_archive(dict):
+class null_archive(archive):
     """dictionary interface to nothing -- it's always empty"""
     def __init__(self, *args, **kwds):
         """initialize a permanently-empty dictionary"""
@@ -303,59 +302,37 @@ class null_archive(dict):
         if name is None:
             name = self.__state__['id']
         return null_archive(__magic_key_0192837465__=name)
+    def __drop__(self):
+        """drop the associated database
+
+      EXPERIMENTAL: This method is intended to remove artifacts external to
+      the instance. For a null_archive there are none, so just call clear.
+        """
+        self.clear()
     # interface
-    def load(self, *args):
-        """does nothing. required to use an archive as a cache"""
-        return
-    dump = load
-    def archived(self, *on):
-        """check if the cache is a persistent archive"""
-        L = len(on)
-        if not L: return False
-        if L > 1: raise TypeError("archived expected at most 1 argument, got %s" % str(L+1))
-        raise ValueError("cannot toggle archive")
-    def sync(self, clear=False):
-        "does nothing. required to use an archive as a cache"
-        pass
-    def drop(self): #XXX: or actually drop the backend?
-        "set the current archive to NULL"
-        return self.__archive(None)
-    def open(self, archive):
-        "replace the current archive with the archive provided"
-        return self.__archive(archive)
-    def __get_archive(self):
-        return self
-    def __get_name(self):
-        return self.__state__['id']
-    def __get_state(self):
-        return self.__state__.copy()
-    def __archive(self, archive):
-        raise ValueError("cannot set new archive")
-    archive = property(__get_archive, __archive)
-    name = property(__get_name, __archive)
-    state = property(__get_state, __archive)
     pass
 
 
-class dir_archive(dict):
+class dir_archive(archive):
     """dictionary-style interface to a folder of files"""
     def __init__(self, dirname=None, serialized=True, compression=0, permissions=None, **kwds):
         """initialize a file folder with a synchronized dictionary interface
 
-    Inputs:
-        dirname: name of the root archive directory [default: memo]
-        serialized: if True, pickle file contents; otherwise save python objects
-        compression: compression level (0 to 9) [default: 0 (no compression)]
-        permissions: octal representing read/write permissions [default: 0o775]
-        memmode: access mode for files, one of {None, 'r+', 'r', 'w+', 'c'}
-        memsize: approximate size (in MB) of cache for in-memory compression
-        protocol: pickling protocol [default: None (use the default protocol)]
+    Args:
+        dirname (str, default='memo'): path of the archive root directory
+        serialized (bool, default=True): save python objects in pickled files
+        compression (int, default=0): compression level (0 to 9), 0 is None
+        permissions (octal, default=0o775): read/write permission indicator
+        memmode (str, default=None): mode, one of ``{None, 'r+', 'r', 'w+', 'c'}``
+        memsize (int, default=100): size (MB) of cache for in-memory compression
+        protocol (int, default=DEFAULT_PROTOCOL): pickling protocol
         """
         #XXX: if compression or mode is given, use joblib-style pickling
         #     (ignoring 'serialized'); else if serialized, use dill unless
-        #     fast=True (then use joblib-style pickling). If not serialized,
-        #     then write raw objects and load objects with import.
-        """dirname = full filepath"""
+        #     fast=True (then use joblib-style pickling), or protocol='json'
+        #     (then use json-style pickling). If not serialized, then write
+        #     raw objects and load objects with import. Also, if fast=True
+        #     and protocol='json', the use protocol=None. #FIXME: needs doc
         if dirname is None: #FIXME: default root as /tmp or something better
             dirname = 'memo' #FIXME: need better default
         # set state
@@ -449,6 +426,19 @@ class dir_archive(dict):
         adict = dir_archive(dirname=name, **self.state)
        #adict.update(self.__asdict__())
         return adict
+    def __drop__(self):
+        """drop the associated database
+
+      EXPERIMENTAL: Deleting the directory may not work due to permission
+      issues. Caller may need to be connected as a superuser and database
+      owner.
+        """
+        self.clear()
+        import os
+        import shutil
+        if os.path.exists(self.__state__['id']):
+            shutil.rmtree(self.__state__['id'])
+        return
     def fromkeys(self, *args): #XXX: build a dict (not an archive)?
         return dict.fromkeys(*args)
     fromkeys.__doc__ = dict.fromkeys.__doc__
@@ -462,52 +452,28 @@ class dir_archive(dict):
         _dir = self._getdir(key)
         return os.path.exists(_dir)
     __contains__.__doc__ = dict.__contains__.__doc__
-    if getattr(dict, 'has_key', None):
-        has_key = __contains__
-        has_key.__doc__ = dict.has_key.__doc__
-        def __iter__(self):
-            return self._keydict().iterkeys()
-        def iteritems(self): #XXX: should be dictionary-itemiterator
-            keys = self._keydict()
-            return ((key,self.__getitem__(key)) for key in keys)
-        iteritems.__doc__ = dict.iteritems.__doc__
-        iterkeys = __iter__
-        iterkeys.__doc__ = dict.iterkeys.__doc__
-        def itervalues(self): #XXX: should be dictionary-valueiterator
-            keys = self._keydict()
-            return (self.__getitem__(key) for key in keys)
-        itervalues.__doc__ = dict.itervalues.__doc__
-    else:
-        def __iter__(self):
-            return iter(self._keydict().keys())
+    def __iter__(self):
+        return iter(self._keydict().keys())
     __iter__.__doc__ = dict.__iter__.__doc__
     def keys(self):
-        if sys.version_info[0] < 3:
-            return self._keydict().keys()
-        else: return KeysView(self) #XXX: show keys not dict
+        return KeysView(self) #XXX: show keys not dict
     keys.__doc__ = dict.keys.__doc__
     def items(self):
-        if sys.version_info[0] < 3:
-            keys = self._keydict()
-            return [(key,self.__getitem__(key)) for key in keys]
-        else: return ItemsView(self) #XXX: show items not dict
+        return ItemsView(self) #XXX: show items not dict
     items.__doc__ = dict.items.__doc__
     def values(self):
-        if sys.version_info[0] < 3:
-            keys = self._keydict()
-            return [self.__getitem__(key) for key in keys]
-        else: return ValuesView(self) #XXX: show values not dict
+        return ValuesView(self) #XXX: show values not dict
     values.__doc__ = dict.values.__doc__
-    if _view:
-        def viewkeys(self):
-            return KeysView(self) #XXX: show keys not dict
-        viewkeys.__doc__ = dict.viewkeys.__doc__
-        def viewvalues(self):
-            return ValuesView(self) #XXX: show values not dict
-        viewvalues.__doc__ = dict.viewvalues.__doc__
-        def viewitems(self):
-            return ItemsView(self) #XXX: show items not dict
-        viewitems.__doc__ = dict.viewitems.__doc__
+    def popkeys(self, keys, *value):
+        """    D.popkeys(k[,d]) -> v, remove specified keys and return corresponding values.
+    If key in keys is not found, d is returned if given, otherwise KeyError is raised."""
+        if not hasattr(keys, '__iter__'):
+            return self.pop(keys, *value)
+        if len(value):
+            return [self.pop(k, *value) for k in keys]
+        memo = self._keydict() # 'shadow' dict for desired error behavior
+        [memo.pop(k) for k in keys]
+        return [self.pop(k) for k in keys]
     def pop(self, key, *value): #XXX: or make DEAD ?
         try:
             memo = {key: self.__getitem__(key)}
@@ -519,7 +485,7 @@ class dir_archive(dict):
     pop.__doc__ = dict.pop.__doc__
     def popitem(self):
         key = self.__iter__()
-        try: key = key.next()
+        try: key = next(key)
         except StopIteration: raise KeyError("popitem(): dictionary is empty")
         return (key, self.pop(key))
     popitem.__doc__ = dict.popitem.__doc__
@@ -544,7 +510,8 @@ class dir_archive(dict):
         # special handling for pickles; enable non-strings (however 1=='1')
         try: ispickle = key.startswith(PROTO) and key.endswith(STOP)
         except: ispickle = False #FIXME: protocol 0,1 don't startwith(PROTO)
-        return hash(key, 'md5') if ispickle else str(key) #XXX: always hash?
+        key = hash(key, 'md5') if ispickle else str(key) #XXX: always hash?
+        return key.replace('-','_')
        ##XXX: below probably fails on windows, and could be huge... use 'md5'
        #return repr(key)[1:-1] if ispickle else str(key) # or repr?
 
@@ -579,7 +546,7 @@ class dir_archive(dict):
         "get a dict of subdirectories in the root directory, with dummy values"
         keys = self._lsdir()
         return dict((self._getkey(key),None) for key in keys)
-
+        #FIXME: dict((i,self._getkey(key)) for i,key in enumerate(keys))
     def _reverse_lookup(self, args): #XXX: guaranteed 1-to-1 mapping?
         "get subdirectory name from args"
         d = {}
@@ -603,9 +570,13 @@ class dir_archive(dict):
                 if self.__state__['fast']: #XXX: enable override of 'mode' ?
                     memo = _pickle.load(_file, mmap_mode=self.__state__['memmode'])
                 else:
-                    f = open(_file, 'rb')
-                    memo = dill.load(f)
-                    f.close()
+                    protocol = self.__state__['protocol']
+                    if type(protocol) is str: #XXX: assumes json
+                        pik,mode = json,'r'
+                    else:
+                        pik,mode = dill,'rb'
+                    with open(_file, mode) as f:
+                        memo = pik.load(f)
             except: #XXX: should only catch the appropriate exceptions
                 memo = None
                 raise KeyError(key)
@@ -640,112 +611,98 @@ class dir_archive(dict):
             if self.__state__['serialized']:
                 protocol = self.__state__['protocol']
                 if self.__state__['fast']:
+                    protocol = None if type(protocol) is str else protocol
                     compression = self.__state__['compression']
                     _pickle.dump(value, _file, compress=compression,
                                                protocol=protocol)
                     if input: _pickle.dump(key, _args, compress=compression,
                                                        protocol=protocol)
                 else:
-                    f = open(_file, 'wb')
-                    dill.dump(value, f, protocol=protocol)  #XXX: byref=True ?
-                    f.close()
+                    if type(protocol) is str: #XXX: assumes json
+                        pik,mode,kwd = json,'w',{}
+                    else: #XXX: byref?
+                        pik,mode,kwd = dill,'wb',{'protocol':protocol}
+                    with open(_file, mode) as f:
+                        pik.dump(value, f, **kwd)
                     if input:
-                        f = open(_args, 'wb')
-                        dill.dump(key, f, protocol=protocol)
-                        f.close()
+                        with open(_args, mode) as f:
+                            pik.dump(key, f, **kwd)
             else: # try to get an import for the object
                 try: memo = getimportable(value, alias='memo', byname=False)
                 except AttributeError: #XXX: HACKY... get classes by name
                     memo = getimportable(value, alias='memo')
                 #XXX: class instances and such fail... abuse pickle here?
                 from .tools import _b
-                f = open(_file, 'wb')
-                f.write(_b(memo))
-                f.close()
+                with open(_file, 'wb') as f:
+                    f.write(_b(memo))
                 if input:
                     try: memo = getimportable(key, alias='memo', byname=False)
                     except AttributeError:
                         memo = getimportable(key, alias='memo')
                     from .tools import _b
-                    f = open(_args, 'wb')
-                    f.write(_b(memo))
-                    f.close()
+                    with open(_args, 'wb') as f:
+                        f.write(_b(memo))
         except OSError:
-            "failed to populate directory for '%s'" % key
+            "failed to populate directory for '%s'" % str(key)
         # move the results to the proper place
         try: #XXX: possible permissions issues here
             self._rmdir(key) #XXX: 'key' must be a suitable dir name
             os.renames(self._getdir(_key), self._getdir(key))
 #       except TypeError: #XXX: catch key that isn't converted to safe filename
-#           "error in populating directory for '%s'" % key
+#           "error in populating directory for '%s'" % str(key)
         except OSError: #XXX: if rename fails, may need cleanup (_rmdir ?)
-            "error in populating directory for '%s'" % key
+            "error in populating directory for '%s'" % str(key)
 
     def _get_args(self):
-        if self.__state__['serialized']: return 'input.pkl'
+        if self.__state__['serialized']:
+            if type(self.__state__['protocol']) is str \
+            and not self.__state__['fast']:
+                return 'input.json'
+            else: return 'input.pkl'
         return '__args__.py'
     def _get_file(self):
-        if self.__state__['serialized']: return 'output.pkl'
+        if self.__state__['serialized']:
+            if type(self.__state__['protocol']) is str \
+            and not self.__state__['fast']:
+                return 'output.json'
+            else: return 'output.pkl'
         return '__init__.py'
     def _set_file(self, file):
         raise NotImplementedError("cannot set attribute '_file'")
 
     # interface
-    def load(self, *args):
-        """does nothing. required to use an archive as a cache"""
-        return
-    dump = load
-    def archived(self, *on):
-        """check if the cache is a persistent archive"""
-        L = len(on)
-        if not L: return True
-        if L > 1: raise TypeError("archived expected at most 1 argument, got %s" % str(L+1))
-        raise ValueError("cannot toggle archive")
-    def sync(self, clear=False):
-        "does nothing. required to use an archive as a cache"
-        pass
-    def drop(self): #XXX: or actually drop the backend?
-        "set the current archive to NULL"
-        return self.__archive(None)
-    def open(self, archive):
-        "replace the current archive with the archive provided"
-        return self.__archive(archive)
-    def __get_archive(self):
-        return self
     def __get_name(self):
         return os.path.basename(self.__state__['id'])
-    def __get_state(self):
-        return self.__state__.copy()
     def __archive(self, archive):
         raise ValueError("cannot set new archive")
-    archive = property(__get_archive, __archive)
     name = property(__get_name, __archive)
     _file = property(_get_file, _set_file)
     _args = property(_get_args, _set_file)
-    state = property(__get_state, __archive)
     pass
 
 
-class file_archive(dict):
+class file_archive(archive):
     """dictionary-style interface to a file"""
     def __init__(self, filename=None, serialized=True, **kwds): # False
         """initialize a file with a synchronized dictionary interface
 
-    Inputs:
-        filename: name of the file backend [default: memo.pkl or memo.py]
-        serialized: if True, pickle file contents; otherwise save python objects
-        protocol: pickling protocol [default: None (use the default protocol)]
+    Args:
+        filename (str, default='memo.pkl'): path of the file archive
+        serialized (bool, default=True): save python objects in pickled file
+        protocol (int, default=DEFAULT_PROTOCOL): pickling protocol
         """
-        """filename = full filepath"""
-        if filename is None:
-            if serialized: filename = 'memo.pkl' #FIXME: need better default
-            else: filename = 'memo.py' #FIXME: need better default
+        #FIXME: (needs doc) if protocol='json', use the json serializer
+        protocol = kwds.get('protocol', None)
+        if filename is None: #XXX: need better default filename?
+            if serialized:
+                filename = 'memo.json' if type(protocol) is str else 'memo.pkl'
+            else: filename = 'memo.py'
         elif not serialized and not filename.endswith(('.py','.pyc','.pyo','.pyd')): filename = filename+'.py'
         # set state
         self.__state__ = {
             'id': filename,
             'serialized': serialized,
-            'protocol': kwds.get('protocol', None)
+            'protocol': protocol
         } #XXX: add 'cloud' option?
         if not os.path.exists(filename):
             self.__save__({})
@@ -759,10 +716,14 @@ class file_archive(dict):
         """build a dictionary containing the archive contents"""
         filename = self.__state__['id']
         if self.__state__['serialized']:
+            protocol = self.__state__['protocol']
+            if type(protocol) is str:
+                pik,mode = json,'r'
+            else:
+                pik,mode = dill,'rb'
             try:
-                f = open(filename, 'rb')
-                memo = dill.load(f)
-                f.close()
+                with open(filename, mode) as f:
+                    memo = pik.load(f)
             except:
                 memo = {}
                #raise OSError("error reading file archive %s" % filename)
@@ -795,14 +756,17 @@ class file_archive(dict):
         try:
             if self.__state__['serialized']:
                 protocol = self.__state__['protocol']
-                f = open(_filename, 'wb')
-                dill.dump(memo, f, protocol=protocol)  #XXX: byref=True ?
-                f.close()
+                if type(protocol) is str: #XXX: assumes 'json'
+                    pik,mode,kwd = json,'w',{}
+                else: #XXX: byref=True ?
+                    pik,mode,kwd = dill,'wb',{'protocol':protocol}
+                with open(_filename, mode) as f:
+                    pik.dump(memo, f, **kwd)
             else: #XXX: likely_import for each item in dict... ?
                 from .tools import _b
                 open(_filename, 'wb').write(_b('memo = %s' % repr(memo)))
         except OSError:
-            "failed to populate file for %s" % filename
+            "failed to populate file for %s" % str(filename)
         # move the results to the proper place
         try:
             os.remove(filename)
@@ -810,7 +774,7 @@ class file_archive(dict):
         try:
             os.renames(_filename, filename)
         except OSError:
-            "error in populating %s" % filename
+            "error in populating %s" % str(filename)
         return
     #FIXME: missing __cmp__, __...__
     def __eq__(self, y):
@@ -854,6 +818,17 @@ class file_archive(dict):
         adict = file_archive(filename=name, **self.state)
        #adict.update(self.__asdict__())
         return adict
+    def __drop__(self):
+        """drop the associated database
+
+      EXPERIMENTAL: Deleting the file may not work due to permission issues.
+      Caller may need to be connected as a superuser and database owner.
+        """
+        self.clear()
+        import os
+        if os.path.exists(self.__state__['id']):
+            os.remove(self.__state__['id'])
+        return
     def fromkeys(self, *args): #XXX: build a dict (not an archive)?
         return dict.fromkeys(*args)
     fromkeys.__doc__ = dict.fromkeys.__doc__
@@ -864,48 +839,27 @@ class file_archive(dict):
     def __contains__(self, key):
         return key in self.__asdict__()
     __contains__.__doc__ = dict.__contains__.__doc__
-    if getattr(dict, 'has_key', None):
-        has_key = __contains__
-        has_key.__doc__ = dict.has_key.__doc__
-        def __iter__(self):
-            return self.__asdict__().iterkeys()
-        def iteritems(self):
-            return self.__asdict__().iteritems()
-        iteritems.__doc__ = dict.iteritems.__doc__
-        iterkeys = __iter__
-        iterkeys.__doc__ = dict.iterkeys.__doc__
-        def itervalues(self):
-            return self.__asdict__().itervalues()
-        itervalues.__doc__ = dict.itervalues.__doc__
-    else:
-        def __iter__(self):
-            return iter(self.__asdict__().keys())
+    def __iter__(self):
+        return iter(self.__asdict__().keys())
     __iter__.__doc__ = dict.__iter__.__doc__
     def keys(self):
-        if sys.version_info[0] < 3:
-            return self.__asdict__().keys()
-        else: return KeysView(self) #XXX: show keys not dict
+        return KeysView(self) #XXX: show keys not dict
     keys.__doc__ = dict.keys.__doc__
     def items(self):
-        if sys.version_info[0] < 3:
-            return self.__asdict__().items()
-        else: return ItemsView(self) #XXX: show items not dict
+        return ItemsView(self) #XXX: show items not dict
     items.__doc__ = dict.items.__doc__
     def values(self):
-        if sys.version_info[0] < 3:
-            return self.__asdict__().values()
-        else: return ValuesView(self) #XXX: show values not dict
+        return ValuesView(self) #XXX: show values not dict
     values.__doc__ = dict.values.__doc__
-    if _view:
-        def viewkeys(self):
-            return KeysView(self) #XXX: show keys not dict
-        viewkeys.__doc__ = dict.viewkeys.__doc__
-        def viewvalues(self):
-            return ValuesView(self) #XXX: show values not dict
-        viewvalues.__doc__ = dict.viewvalues.__doc__
-        def viewitems(self):
-            return ItemsView(self) #XXX: show items not dict
-        viewitems.__doc__ = dict.viewitems.__doc__
+    def popkeys(self, keys, *value):
+        """    D.popkeys(k[,d]) -> v, remove specified keys and return corresponding values.
+    If key in keys is not found, d is returned if given, otherwise KeyError is raised."""
+        if not hasattr(keys, '__iter__'):
+            return self.pop(keys, *value)
+        memo = self.__asdict__()
+        res = [memo.pop(k, *value) for k in keys]
+        self.__save__(memo)
+        return res
     def pop(self, key, *value):
         memo = self.__asdict__()
         res = memo.pop(key, *value)
@@ -933,36 +887,11 @@ class file_archive(dict):
     def __len__(self):
         return len(self.__asdict__())
     # interface
-    def load(self, *args):
-        """does nothing. required to use an archive as a cache"""
-        return
-    dump = load
-    def archived(self, *on):
-        """check if the cache is a persistent archive"""
-        L = len(on)
-        if not L: return True
-        if L > 1: raise TypeError("archived expected at most 1 argument, got %s" % str(L+1))
-        raise ValueError("cannot toggle archive")
-    def sync(self, clear=False):
-        "does nothing. required to use an archive as a cache"
-        pass
-    def drop(self): #XXX: or actually drop the backend?
-        "set the current archive to NULL"
-        return self.__archive(None)
-    def open(self, archive):
-        "replace the current archive with the archive provided"
-        return self.__archive(archive)
-    def __get_archive(self):
-        return self
     def __get_name(self):
         return os.path.basename(self.__state__['id'])
-    def __get_state(self):
-        return self.__state__.copy()
     def __archive(self, archive):
         raise ValueError("cannot set new archive")
-    archive = property(__get_archive, __archive)
     name = property(__get_name, __archive)
-    state = property(__get_state, __archive)
     pass
 
 
@@ -986,7 +915,7 @@ if sql:
   #       however, '\x80' and u'\x80' and b'\x80' are not valid (also not 80)
   #       NOTE: if sql == False: 80, u'\x80', and b'\\x80' are also VALID
 
-  class sql_archive(dict):
+  class sql_archive(archive):
       """dictionary-style interface to a sql database"""
       def __init__(self, database=None, **kwds):
           """initialize a sql database with a synchronized dictionary interface
@@ -1000,11 +929,12 @@ if sql:
       the default database is 'defaultdb'.  Allows keyword options for database
       configuration, such as connection pooling.
 
-      Inputs:
-          database: url of the database backend [default: sqlite:///:memory:]
-          serialized: if True, pickle table contents; otherwise cast as strings
-          protocol: pickling protocol [default: None (use the default protocol)]
+      Args:
+          database (str, default=None): database url (see above note)
+          serialized (bool, default=True): save objects as pickled strings
+          protocol (int, default=DEFAULT_PROTOCOL): pickling protocol
           """
+          #FIXME: (needs doc) if protocol='json', use the json serializer
           __import_sql__()
           # create database, if doesn't exist
           if database is None: database = 'sqlite:///:memory:'
@@ -1029,26 +959,31 @@ if sql:
               'config': kwds.pop('config', kwds.copy())
           } #XXX: _engine and _metadata (and _key and _val) also __state__ ?
           # get engine
+          kwds['future'] = True # 1.4 & 2.0
           if dbname == ':memory:':
               self._engine = sql.create_engine(url, **kwds)
           elif _database.startswith('sqlite'):
               self._engine = sql.create_engine(_database, **kwds)
           else:
-              self._engine = sql.create_engine(url) #XXX: **kwds ?
+              self._engine = sql.create_engine(url, future=True) #XXX: **kwds ?
               try:
-                  conn = self._engine.connect()
+                  self._conn = self._engine.connect()
                   if _database.startswith('postgres'):
-                      conn.connection.connection.set_isolation_level(0)
-                  conn.execute("CREATE DATABASE %s;" % dbname)
-              except Exception: pass
+                      self._conn.connection.connection.set_isolation_level(0)
+                  self._conn.execute(sql.text("CREATE DATABASE %s;" % dbname))
+                  self._conn.commit()
+              except Exception: self._conn = None
               finally:
                   if _database.startswith('postgres'):
-                      conn.connection.connection.set_isolation_level(1)
+                      self._conn.connection.connection.set_isolation_level(1)
               try:
-                  self._engine.execute("USE %s;" % dbname)
+                  if self._conn is None: self._conn = self._engine.connect()
+                  self._conn.execute(sql.text("USE %s;" % dbname))
+                  self._conn.commit()
               except Exception:
                   pass
               self._engine = sql.create_engine(_database, **kwds)
+          self._conn = self._engine.connect()
           # table internals
           self._metadata = sql.MetaData()
           self._key = 'Kkeyqwg907' # primary key name
@@ -1067,22 +1002,25 @@ if sql:
           """
           _database = self.__state__['id']
           url, dbname = _database.rsplit('/', 1)
-          self._engine = sql.create_engine(url)
+          self._engine = sql.create_engine(url, future=True) # 1.4 & 2.0
           try:
-              conn = self._engine.connect()
+              self._conn = self._engine.connect()
               if _database.startswith('postgres'):
                   # these two commands require superuser privs
-                  conn.execute("update pg_database set datallowconn = 'false' WHERE datname = '%s';" % dbname)
-                  conn.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s';" % dbname) # 'pid' used in postgresql >= 9.2
-                  conn.connection.connection.set_isolation_level(0)
-              conn.execute("DROP DATABASE %s;" % dbname) # must be db owner
+                  self._conn.execute(sql.text("update pg_database set datallowconn = 'false' WHERE datname = '%s';" % dbname))
+                  self._conn.commit()
+                  self._conn.execute(sql.text("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s';" % dbname)) # 'pid' used in postgresql >= 9.2
+                  self._conn.commit()
+                  self._conn.connection.connection.set_isolation_level(0)
+              self._conn.execute(sql.text("DROP DATABASE %s;" % dbname)) # must be db owner
+              self._conn.commit()
               if _database.startswith('postgres'):
-                  conn.connection.connection.set_isolation_level(1)
+                  self._conn.connection.connection.set_isolation_level(1)
           except Exception:
               dbpath = _database.split('///')[-1]
               if os.path.exists(dbpath): # else fail silently
                   os.remove(dbpath)
-          self._metadata = self._engine = None # self.__state__['table']=None
+          self._metadata = self._engine = self._conn = None # self.__state__['table']=None
           return
       def __asdict__(self):
           """build a dictionary containing the archive contents"""
@@ -1107,11 +1045,11 @@ if sql:
       __delitem__.__doc__ = dict.__delitem__.__doc__
       def __getitem__(self, key): #XXX: value is table['key','key']; slow?
           table = self._gettable(key)
-          query = sql.select([table],table.c[self._key] == self._key)#XXX: slow?
-          row = self._engine.execute(query).fetchone()
+          query = sql.select(table).where(table.c[self._key] == self._key)#XXX: slow?
+          row = self._conn.execute(query).fetchone()
           if row is None:
               raise RuntimeError("primary key for '%s' not found" % key)
-          return row[self._val]
+          return row._mapping[self._val]
       __getitem__.__doc__ = dict.__getitem__.__doc__
       def __repr__(self):
           return "sql_archive('%s', %s, cached=False)" % (self.name, self.__asdict__())
@@ -1127,7 +1065,8 @@ if sql:
               query = table.insert()
               values = {self._key: self._key}
               values.update(value)
-          self._engine.execute(query.values(**values))
+          self._conn.execute(query.values(**values))
+          self._conn.commit()
           return
       __setitem__.__doc__ = dict.__setitem__.__doc__
       def clear(self):
@@ -1156,52 +1095,28 @@ if sql:
       def __contains__(self, key):
           return key in self._keys()
       __contains__.__doc__ = dict.__contains__.__doc__
-      if getattr(dict, 'has_key', None):
-          has_key = __contains__
-          has_key.__doc__ = dict.has_key.__doc__
-          def __iter__(self):
-              return self._tables().iterkeys()
-          def iteritems(self): #XXX: should be dictionary-itemiterator
-              keys = self._tables()
-              return ((key,self.__getitem__(key)) for key in keys)
-          iteritems.__doc__ = dict.iteritems.__doc__
-          iterkeys = __iter__
-          iterkeys.__doc__ = dict.iterkeys.__doc__
-          def itervalues(self): #XXX: should be dictionary-valueiterator
-              keys = self._tables()
-              return (self.__getitem__(key) for key in keys)
-          itervalues.__doc__ = dict.itervalues.__doc__
-      else:
-          def __iter__(self):
-              return iter(self._keys())
+      def __iter__(self):
+          return iter(self._keys())
       __iter__.__doc__ = dict.__iter__.__doc__
       def keys(self):
-          if sys.version_info[0] < 3:
-              return self._keys()
-          else: return KeysView(self) #XXX: show keys not dict
+          return KeysView(self) #XXX: show keys not dict
       keys.__doc__ = dict.keys.__doc__
       def items(self):
-          if sys.version_info[0] < 3:
-              keys = self._tables()
-              return [(key,self.__getitem__(key)) for key in keys]
-          else: return ItemsView(self) #XXX: show items not dict
+          return ItemsView(self) #XXX: show items not dict
       items.__doc__ = dict.items.__doc__
       def values(self):
-          if sys.version_info[0] < 3:
-              keys = self._tables()
-              return [self.__getitem__(key) for key in keys]
-          else: return ValuesView(self) #XXX: show values not dict
+          return ValuesView(self) #XXX: show values not dict
       values.__doc__ = dict.values.__doc__
-      if _view:
-          def viewkeys(self):
-              return KeysView(self) #XXX: show keys not dict
-          viewkeys.__doc__ = dict.viewkeys.__doc__
-          def viewvalues(self):
-              return ValuesView(self) #XXX: show values not dict
-          viewvalues.__doc__ = dict.viewvalues.__doc__
-          def viewitems(self):
-              return ItemsView(self) #XXX: show items not dict
-          viewitems.__doc__ = dict.viewitems.__doc__
+      def popkeys(self, keys, *value):
+          """    D.popkeys(k[,d]) -> v, remove specified keys and return corresponding values.
+    If key in keys is not found, d is returned if given, otherwise KeyError is raised."""
+          if not hasattr(keys, '__iter__'):
+              return self.pop(keys, *value)
+          if len(value):
+              return [self.pop(k, *value) for k in keys]
+          memo = self.fromkeys(self._keys()) # 'shadow' dict
+          [memo.pop(k) for k in keys]
+          return [self.pop(k) for k in keys]
       def pop(self, key, *value):
           try:
               memo = {key: self.__getitem__(key)}
@@ -1213,7 +1128,7 @@ if sql:
       pop.__doc__ = dict.pop.__doc__
       def popitem(self):
           key = self.__iter__()
-          try: key = key.next()
+          try: key = next(key)
           except StopIteration: raise KeyError("popitem(): dictionary is empty")
           return (key, self.pop(key))
       popitem.__doc__ = dict.popitem.__doc__
@@ -1240,7 +1155,10 @@ if sql:
           keytype = sql.String(255)
           if self.__state__['serialized']:
               proto = self.__state__['protocol']
-              valtype = sql.PickleType(protocol=proto, pickler=dill)
+              if type(proto) is str: #XXX: assumes 'json'
+                  valtype = sql.PickleType(pickler=json)
+              else:
+                  valtype = sql.PickleType(protocol=proto, pickler=dill)
           else: valtype = sql.Text()
           # create table, if doesn't exist
           table = sql.Table(table, self._metadata,
@@ -1263,7 +1181,8 @@ if sql:
           "get a list of tables in the database" #FIXME: with matching self._key
           if meta: return self._metadata.tables.keys()
           # look at all the tables in the database
-          names = self._engine.table_names()
+          inspector = sql.inspect(self._engine)
+          names = inspector.get_table_names()
           names = [str(name) for name in names]
           # clean up metadata by removing stale tables
           tables = set(self._metadata.tables.keys()) - set(names) #XXX: slow?
@@ -1281,41 +1200,16 @@ if sql:
           table = self._gettable(key)
           return table.c[self._key]
       # interface
-      def load(self, *args):
-          """does nothing. required to use an archive as a cache"""
-          return
-      dump = load
-      def archived(self, *on):
-          """check if the cache is a persistent archive"""
-          L = len(on)
-          if not L: return True
-          if L > 1: raise TypeError("archived expected at most 1 argument, got %s" % str(L+1))
-          raise ValueError("cannot toggle archive")
-      def sync(self, clear=False):
-          "does nothing. required to use an archive as a cache"
-          pass
-      def drop(self): #XXX: or actually drop the backend?
-          "set the current archive to NULL"
-          return self.__archive(None)
-      def open(self, archive):
-          "replace the current archive with the archive provided"
-          return self.__archive(archive)
-      def __get_archive(self):
-          return self
-      def __get_name(self):
-          return self.__state__['id']
       def __get_state(self):
           state = self.__state__.copy() 
           state.update(state.pop('config',{}))
           return state
       def __archive(self, archive):
           raise ValueError("cannot set new archive")
-      archive = property(__get_archive, __archive)
-      name = property(__get_name, __archive)
       state = property(__get_state, __archive)
       pass
 
-  class sqltable_archive(dict):
+  class sqltable_archive(archive):
       """dictionary-style interface to a sql database table"""
       def __init__(self, database=None, table=None, **kwds):
           """initialize a sql database with a synchronized dictionary interface
@@ -1329,12 +1223,13 @@ if sql:
       the default database is 'defaultdb'.  Allows keyword options for database
       configuration, such as connection pooling.
 
-      Inputs:
-          database: url of the database backend [default: sqlite:///:memory:]
-          table: name of the associated database table [default: 'memo']
-          serialized: if True, pickle table contents; otherwise cast as strings
-          protocol: pickling protocol [default: None (use the default protocol)]
+      Args:
+          database (str, default=None): database url (see above note)
+          table (str, default='memo'): name of the associated database table
+          serialized (bool, default=True): save objects as pickled strings
+          protocol (int, default=DEFAULT_PROTOCOL): pickling protocol
           """
+          #FIXME: (needs doc) if protocol='json', use the json serializer
           __import_sql__()
           if table is None: table = 'memo' #XXX: better random unique id ?
           # create database, if doesn't exist
@@ -1362,26 +1257,31 @@ if sql:
               'config': kwds.pop('config', kwds.copy())
           } #XXX: _engine and _metadata (and _key and _val) also __state__ ?
           # get engine
+          kwds['future'] = True # 1.4 & 2.0
           if dbname == ':memory:':
               self._engine = sql.create_engine(url, **kwds)
           elif _database.startswith('sqlite'):
               self._engine = sql.create_engine(_database, **kwds)
           else:
-              self._engine = sql.create_engine(url) #XXX: **kwds ?
+              self._engine = sql.create_engine(url, future=True) #XXX: **kwds ?
               try:
-                  conn = self._engine.connect()
+                  self._conn = self._engine.connect()
                   if _database.startswith('postgres'):
-                      conn.connection.connection.set_isolation_level(0)
-                  conn.execute("CREATE DATABASE %s;" % dbname)
-              except Exception: pass
+                      self._conn.connection.connection.set_isolation_level(0)
+                  self._conn.execute(sql.text("CREATE DATABASE %s;" % dbname))
+                  self._conn.commit()
+              except Exception: self._conn = None
               finally:
                   if _database.startswith('postgres'):
-                      conn.connection.connection.set_isolation_level(1)
+                      self._conn.connection.connection.set_isolation_level(1)
               try:
-                  self._engine.execute("USE %s;" % dbname)
+                  if self._conn is None: self._conn = self._engine.connect()
+                  self._conn.execute(sql.text("USE %s;" % dbname))
+                  self._conn.commit()
               except Exception:
                   pass
               self._engine = sql.create_engine(_database, **kwds)
+          self._conn = self._engine.connect()
           # prepare to create table
           self._metadata = sql.MetaData()
           self._key = 'Kkey' # primary key name
@@ -1389,7 +1289,10 @@ if sql:
           keytype = sql.String(255) #XXX: other better fixed size?
           if self.__state__['serialized']:
               proto = self.__state__['protocol']
-              valtype = sql.PickleType(protocol=proto, pickler=dill)
+              if type(proto) is str: #XXX: assumes 'json'
+                  valtype = sql.PickleType(pickler=json)
+              else:
+                  valtype = sql.PickleType(protocol=proto, pickler=dill)
           else:
               valtype = sql.Text() #XXX: String(255) or BLOB() ???
           # create table, if doesn't exist
@@ -1418,29 +1321,33 @@ if sql:
               return
           _database = self.__state__['root']
           url, dbname = _database.rsplit('/', 1)
-          self._engine = sql.create_engine(url)
+          self._engine = sql.create_engine(url, future=True) # 1.4 & 2.0
           try:
-              conn = self._engine.connect()
+              self._conn = self._engine.connect()
               if _database.startswith('postgres'):
                   # these two commands require superuser privs
-                  conn.execute("update pg_database set datallowconn = 'false' WHERE datname = '%s';" % dbname)
-                  conn.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s';" % dbname) # 'pid' used in postgresql >= 9.2
-                  conn.connection.connection.set_isolation_level(0)
-              conn.execute("DROP DATABASE %s;" % dbname) # must be db owner
+                  self._conn.execute(sql.text("update pg_database set datallowconn = 'false' WHERE datname = '%s';" % dbname))
+                  self._conn.commit()
+                  self._conn.execute(sql.text("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s';" % dbname)) # 'pid' used in postgresql >= 9.2
+                  self._conn.commit()
+                  self._conn.connection.connection.set_isolation_level(0)
+              self._conn.execute(sql.text("DROP DATABASE %s;" % dbname)) # must be db owner
+              self._conn.commit()
               if _database.startswith('postgres'):
-                  conn.connection.connection.set_isolation_level(1)
+                  self._conn.connection.connection.set_isolation_level(1)
           except Exception:
               dbpath = _database.split('///')[-1]
               if os.path.exists(dbpath): # else fail silently
                   os.remove(dbpath)
-          self._metadata = self._engine = self.__state__['id'] = None
+          self._metadata = self._engine = self._conn = self.__state__['id'] = None
           return
       def __len__(self):
-          query = self.__state__['id'].count()
-          return int(self._engine.execute(query).scalar())
+          from sqlalchemy import orm
+          session = orm.sessionmaker(bind=self._engine, future=True)() # 1.4 & 2.0
+          return int(session.query(self.__state__['id']).count())
       def __contains__(self, key):
-          query = sql.select([self._key], self._key == key)
-          row = self._engine.execute(query).fetchone()
+          query = sql.select(self._key).where(self._key == key)
+          row = self._conn.execute(query).fetchone()
           return row is not None
       __contains__.__doc__ = dict.__contains__.__doc__
       def __setitem__(self, key, value):
@@ -1453,7 +1360,8 @@ if sql:
               values = {self._key.name: key}
               values.update(value)
               query = table.insert()
-          self._engine.execute(query.values(**values))
+          self._conn.execute(query.values(**values))
+          self._conn.commit()
           return
       __setitem__.__doc__ = dict.__setitem__.__doc__
       #FIXME: missing __cmp__, __...__
@@ -1483,33 +1391,35 @@ if sql:
           return
       __delitem__.__doc__ = dict.__delitem__.__doc__
       def __getitem__(self, key):
-          query = sql.select([self.__state__['id']], self._key == key)
-          row = self._engine.execute(query).fetchone()
+          query = sql.select(self.__state__['id']).where(self._key == key)
+          row = self._conn.execute(query).fetchone()
           if row is None: raise KeyError(key)
-          return row[self._val]
+          return row._mapping[self._val]
       __getitem__.__doc__ = dict.__getitem__.__doc__
       def __iter__(self): #XXX: should be dictionary-keyiterator
-          query = sql.select([self._key])
-          result = self._engine.execute(query)
+          query = sql.select(self._key)
+          result = self._conn.execute(query)
           for row in result:
               yield row[0]
       __iter__.__doc__ = dict.__iter__.__doc__
       def get(self, key, value=None):
-          query = sql.select([self.__state__['id']], self._key == key)
-          row = self._engine.execute(query).fetchone()
+          query = sql.select(self.__state__['id']).where(self._key == key)
+          row = self._conn.execute(query).fetchone()
           if row != None:
-              _value = row[self._val]
+              _value = row._mapping[self._val]
           else: _value = value
           return _value
       get.__doc__ = dict.get.__doc__
       def clear(self):
           query = self.__state__['id'].delete()
-          self._engine.execute(query)
+          self._conn.execute(query)
+          self._conn.commit()
           return
       clear.__doc__ = dict.clear.__doc__
      #def insert(self, d): #XXX: don't allow this method, or hide ?
      #    query = self.__state__['id'].insert(d)
-     #    self._engine.execute(query)
+     #    self._conn.execute(query)
+     #    self._conn.commit()
      #    return
       def copy(self, name=None): #XXX: always None? or allow other settings?
           "D.copy(name) -> a copy of D, with a new archive at the given name"
@@ -1525,76 +1435,48 @@ if sql:
       fromkeys.__doc__ = dict.fromkeys.__doc__
       def __asdict__(self):
           """build a dictionary containing the archive contents"""
-          if getattr(dict, 'iteritems', None):
-              return dict(self.iteritems())
-          else: return dict(self.items())
+          return dict(self.items())
       def __repr__(self):
           return "sqltable_archive('%s' %s, cached=False)" % (self.name, self.__asdict__())
       __repr__.__doc__ = dict.__repr__.__doc__
-      if getattr(dict, 'has_key', None):
-          def has_key(self, key): #XXX: different than contains... why?
-              query = sql.select([self.__state__['id']], self._key == key)
-              row = self._engine.execute(query).fetchone()
-              return row != None
-          has_key.__doc__ = dict.has_key.__doc__
-          def iteritems(self): #XXX: should be dictionary-itemiterator
-              query = sql.select([self.__state__['id']])
-              result = self._engine.execute(query)
-              for row in result:
-                  yield (row[0], row[self._val])
-          iteritems.__doc__ = dict.iteritems.__doc__
-          iterkeys = __iter__
-          iterkeys.__doc__ = dict.iterkeys.__doc__
-          def itervalues(self): #XXX: should be dictionary-valueiterator
-              query = sql.select([self.__state__['id']])
-              result = self._engine.execute(query)
-              for row in result:
-                  yield row[self._val]
-          itervalues.__doc__ = dict.itervalues.__doc__
-          def keys(self):
-              return list(self.__iter__())
-          def items(self):
-              return list(self.iteritems())
-          def values(self):
-              return list(self.itervalues())
-      else:
-          def keys(self):
-              return KeysView(self) #XXX: show keys not dict
-          def items(self):
-              return ItemsView(self) #XXX: show keys not dict
-          def values(self):
-              return ValuesView(self) #XXX: show keys not dict
+      def keys(self):
+          return KeysView(self) #XXX: show keys not dict
+      def items(self):
+          return ItemsView(self) #XXX: show keys not dict
+      def values(self):
+          return ValuesView(self) #XXX: show keys not dict
       keys.__doc__ = dict.keys.__doc__
       items.__doc__ = dict.items.__doc__
       values.__doc__ = dict.values.__doc__
-      if _view:
-          def viewkeys(self):
-              return KeysView(self) #XXX: show keys not dict
-          viewkeys.__doc__ = dict.viewkeys.__doc__
-          def viewvalues(self):
-              return ValuesView(self) #XXX: show values not dict
-          viewvalues.__doc__ = dict.viewvalues.__doc__
-          def viewitems(self):
-              return ItemsView(self) #XXX: show items not dict
-          viewitems.__doc__ = dict.viewitems.__doc__
+      def popkeys(self, keys, *value):
+          """    D.popkeys(k[,d]) -> v, remove specified keys and return corresponding values.
+    If key in keys is not found, d is returned if given, otherwise KeyError is raised."""
+          if not hasattr(keys, '__iter__'):
+              return self.pop(keys, *value)
+          if len(value):
+              return [self.pop(k, *value) for k in keys]
+          memo = self.fromkeys(self.keys()) # 'shadow' dict
+          [memo.pop(k) for k in keys]
+          return [self.pop(k) for k in keys]
       def pop(self, key, *value):
           L = len(value)
           if L > 1:
               raise TypeError("pop expected at most 2 arguments, got %s" % str(L+1))
-          query = sql.select([self.__state__['id']], self._key == key)
-          row = self._engine.execute(query).fetchone()
+          query = sql.select(self.__state__['id']).where(self._key == key)
+          row = self._conn.execute(query).fetchone()
           if row != None:
-              _value = row[self._val]
+              _value = row._mapping[self._val]
           else:
               if not L: raise KeyError(key)
               _value = value[0]
-          query = sql.delete(self.__state__['id'], self._key == key)
-          self._engine.execute(query)
+          query = sql.delete(self.__state__['id']).where(self._key == key)
+          self._conn.execute(query)
+          self._conn.commit()
           return _value
       pop.__doc__ = dict.pop.__doc__
       def popitem(self):
           key = self.__iter__()
-          try: key = key.next()
+          try: key = next(key)
           except StopIteration: raise KeyError("popitem(): dictionary is empty")
           return (key, self.pop(key))
       popitem.__doc__ = dict.popitem.__doc__
@@ -1602,10 +1484,10 @@ if sql:
           L = len(value)
           if L > 1:
               raise TypeError("setvalue expected at most 2 arguments, got %s" % str(L+1))
-          query = sql.select([self.__state__['id']], self._key == key)
-          row = self._engine.execute(query).fetchone()
+          query = sql.select(self.__state__['id']).where(self._key == key)
+          row = self._conn.execute(query).fetchone()
           if row != None:
-              _value = row[self._val]
+              _value = row._mapping[self._val]
           else:
               if not L: _value = None
               else: _value = value[0]
@@ -1621,27 +1503,6 @@ if sql:
           return #XXX: should do the above all at once, and more efficiently
       update.__doc__ = dict.update.__doc__
       # interface
-      def load(self, *args):
-          """does nothing. required to use an archive as a cache"""
-          return
-      dump = load
-      def archived(self, *on):
-          """check if the cache is a persistent archive"""
-          L = len(on)
-          if not L: return True
-          if L > 1: raise TypeError("archived expected at most 1 argument, got %s" % str(L+1))
-          raise ValueError("cannot toggle archive")
-      def sync(self, clear=False):
-          "does nothing. required to use an archive as a cache"
-          pass
-      def drop(self): #XXX: or actually drop the backend?
-          "set the current archive to NULL"
-          return self.__archive(None)
-      def open(self, archive):
-          "replace the current archive with the archive provided"
-          return self.__archive(archive)
-      def __get_archive(self):
-          return self
       def __get_name(self):
           return "%s?table=%s" % (self.__state__['root'], self.__state__['id'])
       def __get_state(self):
@@ -1652,12 +1513,11 @@ if sql:
           return state
       def __archive(self, archive):
           raise ValueError("cannot set new archive")
-      archive = property(__get_archive, __archive)
       name = property(__get_name, __archive)
       state = property(__get_state, __archive)
       pass
 else:
-  class sqltable_archive(dict): #XXX: requires UTF-8 key; #FIXME: use sqlite3.dbapi2
+  class sqltable_archive(archive): #XXX: requires UTF-8 key; #FIXME: use sqlite3.dbapi2
       """dictionary-style interface to a sql database table"""
       def __init__(self, database=None, table=None, **kwds): #serialized
           """initialize a sql database with a synchronized dictionary interface
@@ -1670,9 +1530,9 @@ else:
       limited to strings, integers, floats, and other basic objects.  To store
       functions, classes, and similar constructs, sqlalchemy must be installed.
 
-      Inputs:
-          database: url of the database backend [default: sqlite:///:memory:]
-          table: name of the associated database table [default: 'memo']
+      Args:
+          database (str, default=None): database url (see above note)
+          table (str, default='memo'): name of the associated database table
           """
           import sqlite3 as db
           if table is None: table = 'memo'
@@ -1808,43 +1668,25 @@ else:
       def __repr__(self):
           return "sqltable_archive('%s' %s, cached=False)" % (self.name, self.__asdict__())
       __repr__.__doc__ = dict.__repr__.__doc__
-      if getattr(dict, 'has_key', None):
-          has_key = __contains__
-          has_key.__doc__ = dict.has_key.__doc__
-          def iteritems(self): #XXX: should be dictionary-itemiterator
-              return ((k,self.__getitem__(k)) for k in self.__iter__())
-          iteritems.__doc__ = dict.iteritems.__doc__
-          iterkeys = __iter__
-          iterkeys.__doc__ = dict.iterkeys.__doc__
-          def itervalues(self): #XXX: should be dictionary-valueiterator
-              return (self.__getitem__(k) for k in self.__iter__())
-          itervalues.__doc__ = dict.itervalues.__doc__
-          def keys(self):
-              return list(self.__iter__())
-          def items(self):
-              return list(self.iteritems())
-          def values(self):
-              return list(self.itervalues())
-      else:
-          def keys(self):
-              return KeysView(self) #XXX: show keys not dict
-          def items(self):
-              return ItemsView(self) #XXX: show keys not dict
-          def values(self):
-              return ValuesView(self) #XXX: show keys not dict
+      def keys(self):
+          return KeysView(self) #XXX: show keys not dict
+      def items(self):
+          return ItemsView(self) #XXX: show keys not dict
+      def values(self):
+          return ValuesView(self) #XXX: show keys not dict
       keys.__doc__ = dict.keys.__doc__
       items.__doc__ = dict.items.__doc__
       values.__doc__ = dict.values.__doc__
-      if _view:
-          def viewkeys(self):
-              return KeysView(self) #XXX: show keys not dict
-          viewkeys.__doc__ = dict.viewkeys.__doc__
-          def viewvalues(self):
-              return ValuesView(self) #XXX: show values not dict
-          viewvalues.__doc__ = dict.viewvalues.__doc__
-          def viewitems(self):
-              return ItemsView(self) #XXX: show items not dict
-          viewitems.__doc__ = dict.viewitems.__doc__
+      def popkeys(self, keys, *value):
+          """    D.popkeys(k[,d]) -> v, remove specified keys and return corresponding values.
+    If key in keys is not found, d is returned if given, otherwise KeyError is raised."""
+          if not hasattr(keys, '__iter__'):
+              return self.pop(keys, *value)
+          if len(value):
+              return [self.pop(k, *value) for k in keys]
+          memo = self.fromkeys(self.keys()) # 'shadow' dict
+          [memo.pop(k) for k in keys]
+          return [self.pop(k) for k in keys]
       def pop(self, key, *value):
           L = len(value)
           if L > 1:
@@ -1862,7 +1704,7 @@ else:
       pop.__doc__ = dict.pop.__doc__
       def popitem(self):
           key = self.__iter__()
-          try: key = key.next()
+          try: key = next(key)
           except StopIteration: raise KeyError("popitem(): dictionary is empty")
           return (key, self.pop(key))
       popitem.__doc__ = dict.popitem.__doc__
@@ -1892,27 +1734,6 @@ else:
           sql = "select * from %s where argstr = ?" % self.__state__['id']
           return tuple(self._engine.execute(sql, (key,)))
       # interface
-      def load(self, *args):
-          """does nothing. required to use an archive as a cache"""
-          return
-      dump = load
-      def archived(self, *on):
-          """check if the cache is a persistent archive"""
-          L = len(on)
-          if not L: return True
-          if L > 1: raise TypeError("archived expected at most 1 argument, got %s" % str(L+1))
-          raise ValueError("cannot toggle archive")
-      def sync(self, clear=False):
-          "does nothing. required to use an archive as a cache"
-          pass
-      def drop(self): #XXX: or actually drop the backend?
-          "set the current archive to NULL"
-          return self.__archive(None)
-      def open(self, archive):
-          "replace the current archive with the archive provided"
-          return self.__archive(archive)
-      def __get_archive(self):
-          return self
       def __get_name(self):
           return "%s?table=%s" % (self.__state__['root'], self.__state__['id'])
       def __get_state(self):
@@ -1921,7 +1742,6 @@ else:
           return state
       def __archive(self, archive):
           raise ValueError("cannot set new archive")
-      archive = property(__get_archive, __archive)
       name = property(__get_name, __archive)
       state = property(__get_state, __archive)
       pass
@@ -1929,17 +1749,18 @@ else:
 
 
 if hdf:
-  class hdf_archive(dict):
+  class hdf_archive(archive):
       """dictionary-style interface to a hdf5 file"""
       def __init__(self, filename=None, serialized=True, **kwds):
           """initialize a hdf5 file with a synchronized dictionary interface
 
-      Inputs:
-          filename: name of the file backend [default: memo.hdf5]
-          serialized: if True, pickle hdf entries; otherwise save python objects
-          protocol: pickling protocol [default: None (use the default protocol)]
-          meta: if True, store as file root metadata; otherwise store in datasets
+      Args:
+          filename (str, default='memo.hdf5'): path of the file archive
+          serialized (bool, default=True): pickle saved python objects
+          protocol (int, default=DEFAULT_PROTOCOL): pickling protocol
+          meta (bool, default=False): store in root metadata (not in dataset)
           """
+          #FIXME: (needs doc) if protocol='json', use the json serializer
           __import_hdf__()
           if filename is None: filename = 'memo.hdf5'
           elif not filename.endswith(('.hdf5','.hdf','.h5')): filename = filename+'.hdf5'
@@ -1963,33 +1784,45 @@ if hdf:
           return file.attrs if self.__state__['meta'] else file
       def _loadkey(self, key): # get a key from the archive
           'convert from a key stored in the HDF file'
-          return dill.loads(key)
+          #key = key.encode() if type(key) is str else key
+          pik = json if type(self.__state__['protocol']) is str else dill
+          return pik.loads(key)
       def _loadval(self, value): # get a value from the archive
           'convert from a value stored in the HDF file'
+          pik = json if type(self.__state__['protocol']) is str else dill
           if self.__state__['meta']:
-              return dill.loads(value) if self.__state__['serialized'] else value
-          return dill.loads(value[0]) if self.__state__['serialized'] else value.value #XXX: correct for arrays?
+              return pik.loads(value.tobytes()) if self.__state__['serialized'] else value
+          return pik.loads(value[0].tobytes()) if self.__state__['serialized'] else value[()] #XXX: correct for arrays?
       def _dumpkey(self, key): # lookup a key in the archive
           'convert to a key stored in the HDF file'
+          if type(self.__state__['protocol']) is str:
+              return json.dumps(key).encode()
           return dill.dumps(key, protocol=0)
       def _dumpval(self, value): # lookup a value in the archive
           'convert to a value stored in the HDF file'
           if self.__state__['serialized']:
-              protocol = self.__state__['protocol']
-              value = dill.dumps(value, protocol=protocol) #XXX: fix at 0?
+              protocol = self.__state__['protocol'] #XXX: fix at 0?
+              if type(protocol) is str:
+                  value = json.dumps(value).encode()
+              else: #XXX: don't use void for protocol = 0?
+                  void = hdf.version.numpy.void #XXX: better import numpy?
+                  value = void(dill.dumps(value, protocol=protocol))
               return value if self.__state__['meta'] else [value]
           return value #XXX: or [value]? (so no scalars)
       def __asdict__(self):
           """build a dictionary containing the archive contents"""
           filename = self.__state__['id']
+          f = None
           try:
               memo = {}
               f = hdf.File(filename, 'r')
               _f = self._attrs(f)
-              for k,v in getattr(f, 'iteritems', f.items)():
-                  memo[self._loadkey(k)] = self._loadval(v)
+              for k,v in f.items():
+                  memo[self._loadkey(k.encode())] = self._loadval(v)
+          except TypeError: # we have an unhashable type
+              memo = {}
+              'unhashable type'
           except: #XXX: should only catch appropriate exceptions
-              f = None
               memo = {}
              #raise OSError("error reading file archive %s" % filename)
           finally:
@@ -2001,17 +1834,17 @@ if hdf:
           filename = self.__state__['id']
           _filename = os.path.join(os.path.dirname(os.path.abspath(filename)), TEMP+hash(random(), 'md5')) if new else filename
           # create a temporary file, and dump the results
+          f = None
           try:
               f = hdf.File(_filename, 'w' if new else 'a')
-              for k,v in getattr(memo, 'iteritems', memo.items)():
+              for k,v in memo.items():
                  #self._attrs(f).update({self._dumpkey(k): self._dumpval(v)})
                   _f = self._attrs(f)
                   _k = self._dumpkey(k)
                   _f.pop(_k,None)
                   _f[_k] = self._dumpval(v)
           except OSError:
-              f = None
-              "failed to populate file for %s" % filename
+              "failed to populate file for %s" % str(filename)
           finally:
               if f is not None: f.close()
           if not new: return
@@ -2022,7 +1855,7 @@ if hdf:
           try:
               os.renames(_filename, filename)
           except OSError:
-              "error in populating %s" % filename
+              "error in populating %s" % str(filename)
           return
       #FIXME: missing __cmp__, __...__
       def __eq__(self, y):
@@ -2037,11 +1870,11 @@ if hdf:
       __ne__.__doc__ = dict.__ne__.__doc__
       def __delitem__(self, key):
           filename = self.__state__['id']
+          f = None
           try:
               f = hdf.File(filename, 'a')
               self._attrs(f).__delitem__(self._dumpkey(key))
           except: #XXX: should only catch appropriate exceptions
-              f = None
               raise KeyError(key)
              #raise OSError("error reading file archive %s" % filename)
           finally:
@@ -2050,11 +1883,11 @@ if hdf:
       __delitem__.__doc__ = dict.__delitem__.__doc__
       def __getitem__(self, key):
           filename = self.__state__['id']
+          f = None
           try:
               f = hdf.File(filename, 'r')
               val = self._loadval(self._attrs(f)[self._dumpkey(key)])
           except: #XXX: should only catch appropriate exceptions
-              f = None
               raise KeyError(key)
              #raise OSError("error reading file archive %s" % filename)
           finally:
@@ -2066,6 +1899,7 @@ if hdf:
       __repr__.__doc__ = dict.__repr__.__doc__
       def __setitem__(self, key, value):
           filename = self.__state__['id']
+          f = None
           try:
               f = hdf.File(filename, 'a')
              #self._attrs(f).update({self._dumpkey(key): self._dumpval(value)})
@@ -2074,7 +1908,6 @@ if hdf:
               _f.pop(_k,None)
               _f[_k] = self._dumpval(value)
           except KeyError: #XXX: should only catch appropriate exceptions
-              f = None
               raise KeyError(key)
              #raise OSError("error reading file archive %s" % filename)
           finally:
@@ -2093,6 +1926,17 @@ if hdf:
           adict = hdf_archive(filename=name, **self.state)
          #adict.update(self.__asdict__())
           return adict
+      def __drop__(self):
+          """drop the associated database
+
+      EXPERIMENTAL: Deleting the file may not work due to permission issues.
+      Caller may need to be connected as a superuser and database owner.
+          """
+          self.clear()
+          import os
+          if os.path.exists(self.__state__['id']):
+              os.remove(self.__state__['id'])
+          return
       def fromkeys(self, *args): #XXX: build a dict (not an archive)?
           return dict.fromkeys(*args)
       fromkeys.__doc__ = dict.fromkeys.__doc__
@@ -2102,86 +1946,48 @@ if hdf:
           return _value
       get.__doc__ = dict.get.__doc__
       def keys(self):
-          if sys.version_info[0] >= 3:
-              return KeysView(self) #XXX: show keys not dict
-          filename = self.__state__['id']
-          try:
-              f = hdf.File(filename, 'r')
-              _keys = [self._loadkey(key) for key in self._attrs(f).keys()]
-          except: #XXX: should only catch appropriate exceptions
-              f = None
-              raise OSError("error reading file archive %s" % filename)
-          finally:
-              if f is not None: f.close()
-          return _keys
+          return KeysView(self) #XXX: show keys not dict
       keys.__doc__ = dict.keys.__doc__
       def values(self):
-          if sys.version_info[0] >= 3:
-              return ValuesView(self) #XXX: show values not dict
-          filename = self.__state__['id']
-          try:
-              f = hdf.File(filename, 'r')
-              vals = [self._loadval(val) for val in self._attrs(f).values()]
-          except: #XXX: should only catch appropriate exceptions
-              f = None
-              raise OSError("error reading file archive %s" % filename)
-          finally:
-              if f is not None: f.close()
-          return vals
+          return ValuesView(self) #XXX: show values not dict
       values.__doc__ = dict.values.__doc__
       def __contains__(self, key):
           filename = self.__state__['id']
+          f = None
           try:
               f = hdf.File(filename, 'r')
               has_key = self._dumpkey(key) in self._attrs(f)
           except KeyError: #XXX: should only catch appropriate exceptions
-              f = None
               raise KeyError(key)
              #raise OSError("error reading file archive %s" % filename)
           finally:
               if f is not None: f.close()
           return has_key
       __contains__.__doc__ = dict.__contains__.__doc__
-      if getattr(dict, 'has_key', None):
-          has_key = __contains__
-          has_key.__doc__ = dict.has_key.__doc__
-          def __iter__(self):
-              return dict((j,i) for (i,j) in enumerate(self.keys())).iterkeys()
-          def iteritems(self):
-              return self.__asdict__().iteritems()
-          iteritems.__doc__ = dict.iteritems.__doc__
-          iterkeys = __iter__
-          iterkeys.__doc__ = dict.iterkeys.__doc__
-          def itervalues(self):
-              return dict((j,i) for (i,j) in enumerate(self.values())).itervalues()
-          itervalues.__doc__ = dict.itervalues.__doc__
-      else:
-          def __iter__(self):
-              return iter(self.keys())
+      def __iter__(self):
+          return iter(self.keys())
       __iter__.__doc__ = dict.__iter__.__doc__
       def items(self):
-          if sys.version_info[0] < 3:
-              return self.__asdict__().items()
-          else: return ItemsView(self) #XXX: show items not dict
+          return ItemsView(self) #XXX: show items not dict
       items.__doc__ = dict.items.__doc__
-      if _view:
-          def viewkeys(self):
-              return KeysView(self) #XXX: show keys not dict
-          viewkeys.__doc__ = dict.viewkeys.__doc__
-          def viewvalues(self):
-              return ValuesView(self) #XXX: show values not dict
-          viewvalues.__doc__ = dict.viewvalues.__doc__
-          def viewitems(self):
-              return ItemsView(self) #XXX: show items not dict
-          viewitems.__doc__ = dict.viewitems.__doc__
+      def popkeys(self, keys, *value):
+          """    D.popkeys(k[,d]) -> v, remove specified keys and return corresponding values.
+    If key in keys is not found, d is returned if given, otherwise KeyError is raised."""
+          if not hasattr(keys, '__iter__'):
+              return self.pop(keys, *value)
+          if len(value):
+              return [self.pop(k, *value) for k in keys]
+          memo = self.fromkeys(self.keys()) # 'shadow' dict
+          [memo.pop(k) for k in keys]
+          return [self.pop(k) for k in keys] #XXX: should open file once
       def pop(self, key, *value):
           value = (self._dumpval(val) for val in value)
           filename = self.__state__['id']
+          f = None
           try:
               f = hdf.File(filename, 'a')
               val = self._loadval(self._attrs(f).pop(self._dumpkey(key), *value))
           except KeyError: #XXX: should only catch appropriate exceptions
-              f = None
               raise KeyError(key)
              #raise OSError("error reading file archive %s" % filename)
           finally:
@@ -2190,12 +1996,12 @@ if hdf:
       pop.__doc__ = dict.pop.__doc__
       def popitem(self):
           filename = self.__state__['id']
+          f = None
           try:
               f = hdf.File(filename, 'a')
               key,val = self._attrs(f).popitem()
               key,val = self._loadkey(key),self._loadval(val)
           except KeyError: #XXX: should only catch appropriate exceptions
-              f = None
               d = {}
               d.popitem()
              #raise OSError("error reading file archive %s" % filename)
@@ -2217,60 +2023,36 @@ if hdf:
       update.__doc__ = dict.update.__doc__
       def __len__(self):
           filename = self.__state__['id']
+          f = None
           try:
               f = hdf.File(filename, 'r')
               _len = len(self._attrs(f))
           except: #XXX: should only catch appropriate exceptions
-              f = None
               raise OSError("error reading file archive %s" % filename)
           finally:
               if f is not None: f.close()
           return _len
       # interface
-      def load(self, *args):
-          """does nothing. required to use an archive as a cache"""
-          return
-      dump = load
-      def archived(self, *on):
-          """check if the cache is a persistent archive"""
-          L = len(on)
-          if not L: return True
-          if L > 1: raise TypeError("archived expected at most 1 argument, got %s" % str(L+1))
-          raise ValueError("cannot toggle archive")
-      def sync(self, clear=False):
-          "does nothing. required to use an archive as a cache"
-          pass
-      def drop(self): #XXX: or actually drop the backend?
-          "set the current archive to NULL"
-          return self.__archive(None)
-      def open(self, archive):
-          "replace the current archive with the archive provided"
-          return self.__archive(archive)
-      def __get_archive(self):
-          return self
       def __get_name(self):
           return os.path.basename(self.__state__['id'])
-      def __get_state(self):
-          return self.__state__.copy()
       def __archive(self, archive):
           raise ValueError("cannot set new archive")
-      archive = property(__get_archive, __archive)
       name = property(__get_name, __archive)
-      state = property(__get_state, __archive)
       pass
 
-  class hdfdir_archive(dict):
+  class hdfdir_archive(archive):
       """dictionary-style interface to a folder of hdf5 files"""
       def __init__(self, dirname=None, serialized=True, **kwds):
           """initialize a hdf5 file with a synchronized dictionary interface
 
-      Inputs:
-          dirname: name of the root archive directory [default: memo]
-          serialized: if True, pickle hdf entries; otherwise save python objects
-          permissions: octal representing read/write permissions [default: 0o775]
-          protocol: pickling protocol [default: None (use the default protocol)]
-          meta: if True, store as file root metadata; otherwise store in datasets
+      Args:
+          dirname (str, default='memo'): path of the archive root directory
+          serialized (bool, default=True): pickle saved python objects
+          permissions (octal, default=0o775): read/write permission indicator
+          protocol (int, default=DEFAULT_PROTOCOL): pickling protocol
+          meta (bool, default=False): store in root metadata (not in dataset)
           """
+          #FIXME: (needs doc) if protocol='json', use the json serializer
           __import_hdf__()
           if dirname is None: #FIXME: default root as /tmp or something better
               dirname = 'memo' #FIXME: need better default
@@ -2342,6 +2124,19 @@ if hdf:
           adict = hdfdir_archive(dirname=name, **self.state)
          #adict.update(self.__asdict__())
           return adict
+      def __drop__(self):
+          """drop the associated database
+
+      EXPERIMENTAL: Deleting the directory may not work due to permission
+      issues. Caller may need to be connected as a superuser and database
+      owner.
+          """
+          self.clear()
+          import os
+          import shutil
+          if os.path.exists(self.__state__['id']):
+              shutil.rmtree(self.__state__['id'])
+          return
       def fromkeys(self, *args): #XXX: build a dict (not an archive)?
           return dict.fromkeys(*args)
       fromkeys.__doc__ = dict.fromkeys.__doc__
@@ -2355,52 +2150,28 @@ if hdf:
           _dir = self._getdir(key)
           return os.path.exists(_dir)
       __contains__.__doc__ = dict.__contains__.__doc__
-      if getattr(dict, 'has_key', None):
-          has_key = __contains__
-          has_key.__doc__ = dict.has_key.__doc__
-          def __iter__(self):
-              return self._keydict().iterkeys()
-          def iteritems(self): #XXX: should be dictionary-itemiterator
-              keys = self._keydict()
-              return ((key,self.__getitem__(key)) for key in keys)
-          iteritems.__doc__ = dict.iteritems.__doc__
-          iterkeys = __iter__
-          iterkeys.__doc__ = dict.iterkeys.__doc__
-          def itervalues(self): #XXX: should be dictionary-valueiterator
-              keys = self._keydict()
-              return (self.__getitem__(key) for key in keys)
-          itervalues.__doc__ = dict.itervalues.__doc__
-      else:
-          def __iter__(self):
-              return iter(self._keydict().keys())
+      def __iter__(self):
+          return iter(self._keydict().keys())
       __iter__.__doc__ = dict.__iter__.__doc__
       def keys(self):
-          if sys.version_info[0] < 3:
-              return self._keydict().keys()
-          else: return KeysView(self) #XXX: show keys not dict
+          return KeysView(self) #XXX: show keys not dict
       keys.__doc__ = dict.keys.__doc__
       def items(self):
-          if sys.version_info[0] < 3:
-              keys = self._keydict()
-              return [(key,self.__getitem__(key)) for key in keys]
-          else: return ItemsView(self) #XXX: show items not dict
+          return ItemsView(self) #XXX: show items not dict
       items.__doc__ = dict.items.__doc__
       def values(self):
-          if sys.version_info[0] < 3:
-              keys = self._keydict()
-              return [self.__getitem__(key) for key in keys]
-          else: return ValuesView(self) #XXX: show values not dict
+          return ValuesView(self) #XXX: show values not dict
       values.__doc__ = dict.values.__doc__
-      if _view:
-          def viewkeys(self):
-              return KeysView(self) #XXX: show keys not dict
-          viewkeys.__doc__ = dict.viewkeys.__doc__
-          def viewvalues(self):
-              return ValuesView(self) #XXX: show values not dict
-          viewvalues.__doc__ = dict.viewvalues.__doc__
-          def viewitems(self):
-              return ItemsView(self) #XXX: show items not dict
-          viewitems.__doc__ = dict.viewitems.__doc__
+      def popkeys(self, keys, *value):
+          """    D.popkeys(k[,d]) -> v, remove specified keys and return corresponding values.
+    If key in keys is not found, d is returned if given, otherwise KeyError is raised."""
+          if not hasattr(keys, '__iter__'):
+              return self.pop(keys, *value)
+          if len(value):
+              return [self.pop(k, *value) for k in keys]
+          memo = self._keydict() # 'shadow' dict for desired error behavior
+          [memo.pop(k) for k in keys]
+          return [self.pop(k) for k in keys]
       def pop(self, key, *value): #XXX: or make DEAD ?
           try:
               memo = {key: self.__getitem__(key)}
@@ -2412,7 +2183,7 @@ if hdf:
       pop.__doc__ = dict.pop.__doc__
       def popitem(self):
           key = self.__iter__()
-          try: key = key.next()
+          try: key = next(key)
           except StopIteration: raise KeyError("popitem(): dictionary is empty")
           return (key, self.pop(key))
       popitem.__doc__ = dict.popitem.__doc__
@@ -2436,7 +2207,9 @@ if hdf:
           # special handling for pickles; enable non-strings (however 1=='1')
           try: ispickle = key.startswith(PROTO) and key.endswith(STOP)
           except: ispickle = False #FIXME: protocol 0,1 don't startwith(PROTO)
-          return hash(key, 'md5') if ispickle else str(key) #XXX: always hash?
+          key = hash(key, 'md5') if ispickle else str(key) #XXX: always hash?
+          return key.replace('-','_')
+          #XXX: special handling in ispickle for protocol=json?
          ##XXX: below probably fails on windows, and could be huge... use 'md5'
          #return repr(key)[1:-1] if ispickle else str(key) # or repr?
       def _mkdir(self, key):
@@ -2468,6 +2241,7 @@ if hdf:
           "get a dict of subdirectories in the root directory, with dummy values"
           keys = self._lsdir()
           return dict((self._getkey(key),None) for key in keys)
+          #FIXME: dict((i,self._getkey(key)) for i,key in enumerate(keys))
       def _reverse_lookup(self, args): #XXX: guaranteed 1-to-1 mapping?
           "get subdirectory name from args"
           d = {}
@@ -2491,13 +2265,16 @@ if hdf:
           try:
               adict = {'serialized':self.__state__['serialized'],\
                        'protocol':self.__state__['protocol'],\
-                       'meta':self.__state__['meta']}
+                       'meta':self.__state__['meta'], 'cached':False}
               #XXX: assumes one entry per file; ...could use name as key?
               #XXX: alternately, could store {key:value} (i.e. use one file)?
-              memo = tuple(hdf_archive(_file, **adict).values())[0]
+              memo = tuple(hdf_archive(_file, **adict).__asdict__().values())[0]
              #memo = next(iter(hdf_archive(_file, **adict).values()))
           except: #XXX: should only catch the appropriate exceptions
               memo = None
+              #FIXME: not sure if _lookup should delete a key in all cases
+              #FIXME: (maybe only delete key when it's new, but fails)
+              #self._rmdir(key) # don't leave a keyfile on disk
               raise KeyError(key)
              #raise OSError("error reading directory for '%s'" % key)
           return memo
@@ -2510,8 +2287,6 @@ if hdf:
           try:
               _file = os.path.join(self._mkdir(_key), self._file)
               if input: _args = os.path.join(self._getdir(_key), self._args)
-
-              protocol = self.__state__['protocol']
               adict = {'serialized':self.__state__['serialized'],\
                        'protocol':self.__state__['protocol'],\
                        'meta':self.__state__['meta']}
@@ -2521,16 +2296,16 @@ if hdf:
               if input:
                   memo = hdf_archive(_args, **adict)
                   memo[None] = key
-          except OSError:
-              "failed to populate directory for '%s'" % key
+          except (OSError,TypeError):
+              "failed to populate directory for '%s'" % str(key)
           # move the results to the proper place
           try: #XXX: possible permissions issues here
               self._rmdir(key) #XXX: 'key' must be a suitable dir name
               os.renames(self._getdir(_key), self._getdir(key))
 #         except TypeError: #XXX: catch key that isn't converted to safe filename
-#             "error in populating directory for '%s'" % key
+#             "error in populating directory for '%s'" % str(key)
           except OSError: #XXX: if rename fails, may need cleanup (_rmdir ?)
-              "error in populating directory for '%s'" % key
+              "error in populating directory for '%s'" % str(key)
       def _get_args(self):
           return 'input.hdf5'
       def _get_file(self):
@@ -2538,47 +2313,22 @@ if hdf:
       def _set_file(self, file):
           raise NotImplementedError("cannot set attribute '_file'")
       # interface
-      def load(self, *args):
-          """does nothing. required to use an archive as a cache"""
-          return
-      dump = load
-      def archived(self, *on):
-          """check if the cache is a persistent archive"""
-          L = len(on)
-          if not L: return True
-          if L > 1: raise TypeError("archived expected at most 1 argument, got %s" % str(L+1))
-          raise ValueError("cannot toggle archive")
-      def sync(self, clear=False):
-          "does nothing. required to use an archive as a cache"
-          pass
-      def drop(self): #XXX: or actually drop the backend?
-          "set the current archive to NULL"
-          return self.__archive(None)
-      def open(self, archive):
-          "replace the current archive with the archive provided"
-          return self.__archive(archive)
-      def __get_archive(self):
-          return self
       def __get_name(self):
           return os.path.basename(self.__state__['id'])
-      def __get_state(self):
-          return self.__state__.copy()
       def __archive(self, archive):
           raise ValueError("cannot set new archive")
-      archive = property(__get_archive, __archive)
       name = property(__get_name, __archive)
       _file = property(_get_file, _set_file)
       _args = property(_get_args, _set_file)
-      state = property(__get_state, __archive)
       pass
 
 else:
-  class hdf_archive(dict):
+  class hdf_archive(archive):
       """dictionary-style interface to a hdf5 file"""
       def __init__(self, *args, **kwds):
           import h5py
       pass
-  class hdfdir_archive(dict):
+  class hdfdir_archive(archive):
       """dictionary-style interface to a folder of hdf5 files"""
       def __init__(self, *args, **kwds):
           import h5py

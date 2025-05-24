@@ -2,27 +2,25 @@
 #
 # Author: Mike McKerns (mmckerns @caltech and @uqfoundation)
 # Copyright (c) 2013-2016 California Institute of Technology.
-# Copyright (c) 2016-2017 The Uncertainty Quantification Foundation.
+# Copyright (c) 2016-2025 The Uncertainty Quantification Foundation.
 # License: 3-clause BSD.  The full license text is available at:
-#  - http://trac.mystic.cacr.caltech.edu/project/pathos/browser/klepto/LICENSE
+#  - https://github.com/uqfoundation/klepto/blob/master/LICENSE
 
-from __future__ import absolute_import
-
-# get version numbers, license, and long description
-try:
-    from .info import this_version as __version__
-    from .info import readme as __doc__, license as __license__
-except ImportError:
-    msg = """First run 'python setup.py build' to build klepto."""
-    raise ImportError(msg)
-
-__author__ = 'Mike McKerns'
-
-__doc__ = """
-""" + __doc__
-
-__license__ = """
-""" + __license__
+# author, version, license, and long description
+try: # the package is installed
+    from .__info__ import __version__, __author__, __doc__, __license__
+except: # pragma: no cover
+    import os
+    import sys 
+    parent = os.path.dirname(os.path.abspath(os.path.dirname(__file__)))
+    sys.path.append(parent)
+    # get distribution meta info 
+    from version import (__version__, __author__,
+                         get_license_text, get_readme_as_rst)
+    __license__ = get_license_text(os.path.join(parent, 'LICENSE'))
+    __license__ = "\n%s" % __license__
+    __doc__ = get_readme_as_rst(os.path.join(parent, 'README.md'))
+    del os, sys, parent, get_license_text, get_readme_as_rst
 
 
 from ._cache import no_cache, inf_cache, lfu_cache, \
@@ -44,9 +42,7 @@ def license():
 
 def citation():
     """print citation"""
-    print (__doc__[-230:-89])
+    print (__doc__[-273:-118])
     return
-
-del absolute_import
 
 # end of file

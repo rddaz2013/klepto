@@ -6,13 +6,12 @@
 #
 # Author: Mike McKerns (mmckerns @caltech and @uqfoundation)
 # Copyright (c) 2013-2016 California Institute of Technology.
-# Copyright (c) 2016-2017 The Uncertainty Quantification Foundation.
+# Copyright (c) 2016-2025 The Uncertainty Quantification Foundation.
 # License: 3-clause BSD.  The full license text is available at:
-#  - http://trac.mystic.cacr.caltech.edu/project/pathos/browser/klepto/LICENSE
+#  - https://github.com/uqfoundation/klepto/blob/master/LICENSE
 """
 a selection of caching decorators
 """
-from __future__ import absolute_import
 from functools import update_wrapper, partial
 from klepto.archives import cache as archive_dict
 from klepto.keymaps import hashmap
@@ -416,7 +415,7 @@ class lfu_cache(object):
     ignore = function argument names and indicies to 'ignore' (default is None)
     tol = integer tolerance for rounding (default is None)
     deep = boolean for rounding depth (default is False, i.e. 'shallow')
-    purge = boolean for purge cache to archive at maxsize (default is True)
+    purge = boolean for purge cache to archive at maxsize (default is False)
 
     If *maxsize* is None, this cache will grow without bound.
 
@@ -445,11 +444,17 @@ class lfu_cache(object):
 
     See: http://en.wikipedia.org/wiki/Cache_algorithms#Least_Frequently_Used
     """
-    def __init__(self, maxsize=100, cache=None, keymap=None, ignore=None, tol=None, deep=False, purge=True):
+    def __new__(cls, *args, **kwds):
+        maxsize = kwds.get('maxsize', -1)
         if maxsize == 0:
-            return no_cache(cache=cache, keymap=keymep, ignore=ignore, tol=tol, deep=deep)
+            return no_cache(*args, **kwds)
         if maxsize is None:
-            return inf_cache(cache=cache, keymap=keymap, ignore=ignore, tol=tol, deep=deep)
+            return inf_cache(*args, **kwds)
+        return object.__new__(cls)
+
+    def __init__(self, maxsize=100, cache=None, keymap=None, ignore=None, tol=None, deep=False, purge=False):
+        if maxsize is None or maxsize == 0:
+            return
         if cache is None: cache = archive_dict()
         elif type(cache) is dict: cache = archive_dict(cache)
 
@@ -630,7 +635,7 @@ class lru_cache(object):
     ignore = function argument names and indicies to 'ignore' (default is None)
     tol = integer tolerance for rounding (default is None)
     deep = boolean for rounding depth (default is False, i.e. 'shallow')
-    purge = boolean for purge cache to archive at maxsize (default is True)
+    purge = boolean for purge cache to archive at maxsize (default is False)
 
     If *maxsize* is None, this cache will grow without bound.
 
@@ -659,11 +664,17 @@ class lru_cache(object):
 
     See: http://en.wikipedia.org/wiki/Cache_algorithms#Least_Recently_Used
     """
-    def __init__(self, maxsize=100, cache=None, keymap=None, ignore=None, tol=None, deep=False, purge=True):
+    def __new__(cls, *args, **kwds):
+        maxsize = kwds.get('maxsize', -1)
         if maxsize == 0:
-            return no_cache(cache=cache, keymap=keymep, ignore=ignore, tol=tol, deep=deep)
+            return no_cache(*args, **kwds)
         if maxsize is None:
-            return inf_cache(cache=cache, keymap=keymap, ignore=ignore, tol=tol, deep=deep)
+            return inf_cache(*args, **kwds)
+        return object.__new__(cls)
+
+    def __init__(self, maxsize=100, cache=None, keymap=None, ignore=None, tol=None, deep=False, purge=False):
+        if maxsize is None or maxsize == 0:
+            return
         if cache is None: cache = archive_dict()
         elif type(cache) is dict: cache = archive_dict(cache)
 
@@ -693,10 +704,7 @@ class lru_cache(object):
 
     def __call__(self, user_function):
         from collections import deque
-        try:
-            from itertools import filterfalse
-        except ImportError:
-            from itertools import ifilterfalse as filterfalse
+        from itertools import filterfalse
        #cache = dict()                  # mapping of args to results
         queue = deque()                 # order that keys have been used
         refcount = Counter()            # times each key is in the queue
@@ -874,7 +882,7 @@ class mru_cache(object):
     ignore = function argument names and indicies to 'ignore' (default is None)
     tol = integer tolerance for rounding (default is None)
     deep = boolean for rounding depth (default is False, i.e. 'shallow')
-    purge = boolean for purge cache to archive at maxsize (default is True)
+    purge = boolean for purge cache to archive at maxsize (default is False)
 
     If *maxsize* is None, this cache will grow without bound.
 
@@ -903,11 +911,17 @@ class mru_cache(object):
 
     See: http://en.wikipedia.org/wiki/Cache_algorithms#Most_Recently_Used
     """
-    def __init__(self, maxsize=100, cache=None, keymap=None, ignore=None, tol=None, deep=False, purge=True):
+    def __new__(cls, *args, **kwds):
+        maxsize = kwds.get('maxsize', -1)
         if maxsize == 0:
-            return no_cache(cache=cache, keymap=keymep, ignore=ignore, tol=tol, deep=deep)
+            return no_cache(*args, **kwds)
         if maxsize is None:
-            return inf_cache(cache=cache, keymap=keymap, ignore=ignore, tol=tol, deep=deep)
+            return inf_cache(*args, **kwds)
+        return object.__new__(cls)
+
+    def __init__(self, maxsize=100, cache=None, keymap=None, ignore=None, tol=None, deep=False, purge=False):
+        if maxsize is None or maxsize == 0:
+            return
         if cache is None: cache = archive_dict()
         elif type(cache) is dict: cache = archive_dict(cache)
 
@@ -1090,7 +1104,7 @@ class rr_cache(object):
     ignore = function argument names and indicies to 'ignore' (default is None)
     tol = integer tolerance for rounding (default is None)
     deep = boolean for rounding depth (default is False, i.e. 'shallow')
-    purge = boolean for purge cache to archive at maxsize (default is True)
+    purge = boolean for purge cache to archive at maxsize (default is False)
 
     If *maxsize* is None, this cache will grow without bound.
 
@@ -1119,11 +1133,17 @@ class rr_cache(object):
 
     http://en.wikipedia.org/wiki/Cache_algorithms#Random_Replacement
     """
-    def __init__(self, maxsize=100, cache=None, keymap=None, ignore=None, tol=None, deep=False, purge=True):
+    def __new__(cls, *args, **kwds):
+        maxsize = kwds.get('maxsize', -1)
         if maxsize == 0:
-            return no_cache(cache=cache, keymap=keymep, ignore=ignore, tol=tol, deep=deep)
+            return no_cache(*args, **kwds)
         if maxsize is None:
-            return inf_cache(cache=cache, keymap=keymap, ignore=ignore, tol=tol, deep=deep)
+            return inf_cache(*args, **kwds)
+        return object.__new__(cls)
+
+    def __init__(self, maxsize=100, cache=None, keymap=None, ignore=None, tol=None, deep=False, purge=False):
+        if maxsize is None or maxsize == 0:
+            return
         if cache is None: cache = archive_dict()
         elif type(cache) is dict: cache = archive_dict(cache)
 

@@ -1,4 +1,11 @@
 include LICENSE
-include README
+include README*
+include MANIFEST.in
+include pyproject.toml
 include tox.ini
-include tests/*py
+include version.py
+recursive-include docs *
+include .*
+prune .git
+prune .coverage
+prune .eggs

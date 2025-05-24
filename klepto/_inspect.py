@@ -2,9 +2,9 @@
 #
 # Author: Mike McKerns (mmckerns @caltech and @uqfoundation)
 # Copyright (c) 2013-2016 California Institute of Technology.
-# Copyright (c) 2016-2017 The Uncertainty Quantification Foundation.
+# Copyright (c) 2016-2025 The Uncertainty Quantification Foundation.
 # License: 3-clause BSD.  The full license text is available at:
-#  - http://trac.mystic.cacr.caltech.edu/project/pathos/browser/klepto/LICENSE
+#  - https://github.com/uqfoundation/klepto/blob/master/LICENSE
 
 #FIXME: klepto's caches ignore names/index, however ignore should be in keymap
 
@@ -86,14 +86,19 @@ def signature(func, variadic=True, markup=True, safe=False):
             p_kwds = func.keywords or {} # dict of default kwd values
             func = func.func
             identified = True
-        except AttributeError: #XXX: anything else to try? No? Give up.
-            pass
+        except AttributeError:
+            if hasattr(func, '__call__') and not hasattr(func, '__name__'):
+                func = func.__call__ # treat callable instance as __call__
+            else: #XXX: anything else to try? No? Give up.
+                pass
     if not identified:
         p_args = ()
         p_kwds = {}
 
+    FULL_ARGS = hasattr(inspect, 'getfullargspec')
     try:
-        arg_spec = inspect.getargspec(func)
+        if FULL_ARGS: arg_spec = inspect.getfullargspec(func)
+        else: arg_spec = inspect.getargspec(func)
     except TypeError:
         if safe: return LONG_FAIL if variadic else TINY_FAIL
         raise TypeError('%r is not a Python function' % func)
@@ -101,10 +106,16 @@ def signature(func, variadic=True, markup=True, safe=False):
     if hasattr(arg_spec, 'args'):
         arg_names = arg_spec.args         # list of input variable names
         arg_defaults = arg_spec.defaults  # list of kwd default values
-        arg_keywords = arg_spec.keywords  # name of **kwds
         arg_varargs = arg_spec.varargs    # name of *args
+        if FULL_ARGS:                     # name of **kwds
+            arg_keywords = getattr(arg_spec, 'varkw') or {}
+            arg_kwdefault = getattr(arg_spec, 'kwonlydefaults') or {}
+        else:
+            arg_keywords = arg_spec.keywords
+            arg_kwdefault = {}
     else:
         arg_names, arg_varargs, arg_keywords, arg_defaults = arg_spec
+        arg_kwdefault = {}
 
     if not arg_defaults or not arg_names:
         defaults = {}
@@ -124,6 +135,8 @@ def signature(func, variadic=True, markup=True, safe=False):
         raise TypeError("%s() got multiple values for keyword argument '%s'" % (func.__name__,errors[0]))
         # the above could fail if taking a partial of a partial
 
+    # include any keyword-only defaults
+    defaults.update(arg_kwdefault)
     # for a partial, arguments given in p_kwds have new defaults
     defaults.update(p_kwds)
     if markup: X = '!'
@@ -136,7 +149,7 @@ def signature(func, variadic=True, markup=True, safe=False):
         defaults = dict((k,v) for (k,v) in defaults.items() if k not in _fixed)
         defaults.update(dict((X+k,v) for (k,v) in _fixed.items()))
 
-    if inspect.ismethod(func) and getattr(func, 'im_self', func.__self__):
+    if inspect.ismethod(func) and func.__self__:
         # then it's a bound method
         explicit = explicit[1:] #XXX: correct to remove 'self' ?
 
@@ -187,8 +200,11 @@ def validate(func, *args, **kwds):
             func = func.func
             p_required = set(p_named) - set(p_defaults)
             identified = True
-        except AttributeError: #XXX: anything else to try? No? Give up.
-            pass
+        except AttributeError:
+            if hasattr(func, '__call__') and not hasattr(func, '__name__'):
+                func = func.__call__ # treat callable instance as __call__
+            else: #XXX: anything else to try? No? Give up.
+                pass
     if not identified:
         p_args = p_named = ()
         p_kwds = p_defaults = {}
@@ -405,16 +421,16 @@ def _keygen(func, ignored, *args, **kwds):
         user_kwds = kwds.copy()
 
     # decompose the list of things to ignore to names and indicies
-    if isinstance(ignored, (str,int)): ignored = [ignored]
-    index_to_ignore = set(i for i in ignored if isinstance(i,int))
-    names_to_ignore = set(i for i in ignored if isinstance(i,str))
+    from numbers import Integral
+    if isinstance(ignored, (str, Integral)): ignored = [ignored]
+    index_to_ignore = set(i for i in ignored if isinstance(i, Integral))
+    names_to_ignore = set(i for i in ignored if isinstance(i, str))
 
     # if ignore self, remove self instead of NULL it
     if inspect.isfunction(func):
         try: # this is a pretty good filter that: user_args[0] is self
             _bound = getattr(user_args[0], func.__name__)
-            _self = getattr(_bound, 'im_self', None)
-            if _self is None: _self = getattr(_bound, '__self__')
+            _self = getattr(_bound, '__self__')
             assert _self == user_args[0]
         except:
             _bound = None

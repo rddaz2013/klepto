@@ -7,15 +7,14 @@
 # Forked by: Mike McKerns (December 2013)
 # Author: Mike McKerns (mmckerns @caltech and @uqfoundation)
 # Copyright (c) 2013-2016 California Institute of Technology.
-# Copyright (c) 2016-2017 The Uncertainty Quantification Foundation.
+# Copyright (c) 2016-2025 The Uncertainty Quantification Foundation.
 # License: 3-clause BSD.  The full license text is available at:
-#  - http://trac.mystic.cacr.caltech.edu/project/pathos/browser/klepto/LICENSE
+#  - https://github.com/uqfoundation/klepto/blob/master/LICENSE
 """
 Utilities for fast persistence of big data, with optional compression.
 """
 
 import traceback
-import sys
 import os
 import zlib
 import warnings
@@ -28,23 +27,15 @@ except NameError:
     _basestring = str
 
 
-try:
-    from io import BytesIO
-except ImportError: # support python2.5
-    from StringIO import StringIO as BytesIO
+from io import BytesIO
 
-if sys.version_info[0] >= 3:
-    Unpickler = pickle._Unpickler
-    Pickler = pickle._Pickler
+Unpickler = pickle._Unpickler
+Pickler = pickle._Pickler
 
-    def asbytes(s):
-        if isinstance(s, bytes):
-            return s
-        return s.encode('latin1')
-else:
-    Unpickler = pickle.Unpickler
-    Pickler = pickle.Pickler
-    asbytes = str
+def asbytes(s):
+    if isinstance(s, bytes):
+        return s
+    return s.encode('latin1')
 
 _MEGA = 2 ** 20
 _MAX_LEN = len(hex(2 ** 64))
@@ -97,9 +88,6 @@ def write_zfile(file_handle, data, compress=1):
     """
     file_handle.write(_ZFILE_PREFIX)
     length = hex(len(data))
-    if sys.version_info[0] < 3 and type(length) is long:
-        # We need to remove the trailing 'L' in the hex representation
-        length = length[:-1]
     # Store the length of the data
     file_handle.write(asbytes(length.ljust(_MAX_LEN)))
     file_handle.write(zlib.compress(asbytes(data), compress))
@@ -226,10 +214,8 @@ class NumpyPickler(Pickler):
             # numerics in a z-file
             _, init_args, state = array.__reduce__()
             # the last entry of 'state' is the data itself
-            zfile = open(filename, 'wb')
-            write_zfile(zfile, state[-1],
-                                compress=self.compress)
-            zfile.close()
+            with open(filename, 'wb') as zfile:
+                write_zfile(zfile, state[-1], compress=self.compress)
             state = state[:-1]
             container = ZNDArrayWrapper(os.path.basename(filename),
                                             init_args, state)
@@ -267,10 +253,8 @@ class NumpyPickler(Pickler):
 
     def close(self):
         if self.compress:
-            zfile = open(self._filename, 'wb')
-            write_zfile(zfile,
-                        self.file.getvalue(), self.compress)
-            zfile.close()
+            with open(self._filename, 'wb') as zfile:
+                write_zfile(zfile, self.file.getvalue(), self.compress)
 
 
 class NumpyUnpickler(Unpickler):
@@ -311,10 +295,7 @@ class NumpyUnpickler(Unpickler):
             self.stack.append(array)
 
     # Be careful to register our new method.
-    if sys.version_info[0] >= 3:
-        dispatch[pickle.BUILD[0]] = load_build
-    else:
-        dispatch[pickle.BUILD] = load_build
+    dispatch[pickle.BUILD[0]] = load_build
 
 
 class ZipNumpyUnpickler(NumpyUnpickler):

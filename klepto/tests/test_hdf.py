@@ -2,9 +2,9 @@
 #
 # Author: Mike McKerns (mmckerns @caltech and @uqfoundation)
 # Copyright (c) 2013-2016 California Institute of Technology.
-# Copyright (c) 2016-2017 The Uncertainty Quantification Foundation.
+# Copyright (c) 2016-2025 The Uncertainty Quantification Foundation.
 # License: 3-clause BSD.  The full license text is available at:
-#  - http://trac.mystic.cacr.caltech.edu/project/pathos/browser/klepto/LICENSE
+#  - https://github.com/uqfoundation/klepto/blob/master/LICENSE
 
 from klepto.safe import lru_cache as memoized
 from random import choice, seed
@@ -69,12 +69,14 @@ def test_combinations():
       hdf_archive('memo.h5',init,serialized=False,meta=False),
       hdf_archive('xxxx.hdf5',init,serialized=True,meta=True),
       hdf_archive('xxxx.h5',init,serialized=False,meta=True),
-#     hdfdir_archive('memoq',init,serialized=False,meta=False),
+      hdfdir_archive('memoq',init,serialized=False,meta=False),
       hdfdir_archive('memor',init,serialized=True,meta=False),
-#     hdfdir_archive('memos',init,serialized=False,meta=True),
+      hdfdir_archive('memos',init,serialized=False,meta=True),
       hdfdir_archive('memot',init,serialized=True,meta=True),
-      #FIXME: hdfdir_archive fails with serialized=False in python 3.x
     ]
+    if tuple(int(i) for i in h5py.__version__.split('.',2)) < (3,0,0):
+      #FIXME: hdfdir_archive fails with serialized=False in python 3.x
+      archives = archives[:4] + archives[5::2]
     maps = [
       None,
       keymap(typed=False, flat=True, sentinel=NOSENTINEL),

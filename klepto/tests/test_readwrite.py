@@ -2,9 +2,9 @@
 #
 # Author: Mike McKerns (mmckerns @caltech and @uqfoundation)
 # Copyright (c) 2013-2016 California Institute of Technology.
-# Copyright (c) 2016-2017 The Uncertainty Quantification Foundation.
+# Copyright (c) 2016-2025 The Uncertainty Quantification Foundation.
 # License: 3-clause BSD.  The full license text is available at:
-#  - http://trac.mystic.cacr.caltech.edu/project/pathos/browser/klepto/LICENSE
+#  - https://github.com/uqfoundation/klepto/blob/master/LICENSE
 
 from klepto.archives import dir_archive
 from pox import rmtree
@@ -95,7 +95,7 @@ def check_numpy(archive):
     d = archive
     x = np.array([1,2,3,4,5])
     y = np.arange(1000)
-    t = np.dtype([('int',np.int),('float32',np.float32)])
+    t = np.dtype([('int32',np.int32),('float32',np.float32)])
     d['a'] = x
     d['b'] = y
     d['c'] = np.inf
